@@ -1,0 +1,39 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f4f6f3; color: #1c2b1f; }
+header { background: #0b6e2f; color: #fff; padding: 14px 16px; }
+.brand { font-size: 24px; font-weight: 800; }
+.tagline { font-size: 13px; opacity: .9; margin-top: 2px; }
+.tabs { display: flex; gap: 6px; padding: 8px; background: #fff; position: sticky; top: 0; z-index: 1000; border-bottom: 1px solid #ddd; }
+.tabs button { flex: 1; padding: 10px 4px; border: 1px solid #0b6e2f; background: #fff; color: #0b6e2f; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; }
+.tabs button.active { background: #0b6e2f; color: #fff; }
+main { max-width: 720px; margin: 0 auto; padding: 10px 10px 30px; }
+#map { height: 300px; border-radius: 12px; border: 1px solid #ccc; z-index: 1; }
+.map-hint { font-size: 12px; color: #555; margin: 6px 2px 12px; }
+.tab { display: none; }
+.tab.active { display: block; }
+.card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.card h2 { margin: 0 0 10px; font-size: 17px; }
+.card h3 { margin: 14px 0 6px; font-size: 15px; }
+label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
+input, select { width: 100%; padding: 11px; border: 1px solid #bbb; border-radius: 8px; font-size: 15px; margin-bottom: 6px; background: #fff; }
+button { padding: 11px 14px; border-radius: 8px; border: 1px solid #0b6e2f; background: #fff; color: #0b6e2f; font-weight: 700; cursor: pointer; margin: 4px 4px 4px 0; }
+button.primary { background: #0b6e2f; color: #fff; width: 100%; }
+button.danger { border-color: #b00020; color: #b00020; }
+.hidden { display: none !important; }
+.muted { color: #666; font-size: 13px; }
+.veh { display: flex; gap: 8px; }
+.veh-btn { flex: 1; font-size: 14px; }
+.veh-btn span { font-size: 12px; font-weight: 400; }
+.veh-btn.active { background: #0b6e2f; color: #fff; }
+.fare-box { background: #e8f5e9; border: 1px solid #0b6e2f; border-radius: 8px; padding: 12px; margin-top: 10px; font-size: 16px; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; }
+.row button { flex: 1; }
+.row3 { display: flex; gap: 6px; }
+.row3 input { flex: 1; }
+.offer, .ride-row, .driver-row, .tx-row, .complaint-row { border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin: 8px 0; font-size: 14px; }
+.offer b { font-size: 16px; }
+.stars button { font-size: 24px; border: none; background: none; padding: 4px; }
+.sos-card { border: 2px solid #b00020; }
+footer { max-width: 720px; margin: 0 auto; padding: 16px; font-size: 12px; color: #555; }
+footer p { margin: 6px 0; }
+@media (max-width: 480px) { .brand { font-size: 20px; } }
