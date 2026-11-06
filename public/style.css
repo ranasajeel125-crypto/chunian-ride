@@ -1,7 +1,8 @@
 * { box-sizing: border-box; }
 body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f4f6f3; color: #1c2b1f; }
 header { background: #0b6e2f; color: #fff; padding: 14px 16px; }
-.brand { font-size: 24px; font-weight: 800; }
+.brand { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+.logo-img { width: 44px; height: 44px; border-radius: 10px; }
 .tagline { font-size: 13px; opacity: .9; margin-top: 2px; }
 .tabs { display: flex; gap: 6px; padding: 8px; background: #fff; position: sticky; top: 0; z-index: 1000; border-bottom: 1px solid #ddd; }
 .tabs button { flex: 1; padding: 10px 4px; border: 1px solid #0b6e2f; background: #fff; color: #0b6e2f; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; }
