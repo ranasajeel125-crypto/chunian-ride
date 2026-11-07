@@ -13,6 +13,26 @@ let vehicle = "bike";
 let currentRide = null;
 let fareEstimate = null;
 let map, markers = {}, pickupMarker = null, destMarker = null;
+let driverMarker = null;
+let driverActiveRide = null;
+
+// ---- Ratings: only REAL ratings from completed rides are ever shown.
+// rating_count 0 (new driver/rider, or demo data) => "New driver"/"New rider".
+function ratingText(rating, count, who) {
+  const n = Number(count || 0);
+  if (n > 0) return `⭐ ${Number(rating).toFixed(1)}`;
+  return `New ${who}`;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371, toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function placeByName(name) { return places.find((p) => p.name === name) || null; }
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json", ...(opts.admin ? { "X-Admin-Pin": store.pin } : {}) }, ...opts });
@@ -30,6 +50,22 @@ document.querySelectorAll(".tabs button").forEach((b) => {
     $("tab-" + b.dataset.tab).classList.add("active");
   });
 });
+
+// ---- Login-first welcome screen ----
+function enterApp(tab) {
+  $("welcome").classList.add("hidden");
+  document.querySelectorAll(".tabs button").forEach((x) => x.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+  const btn = document.querySelector(`.tabs button[data-tab="${tab}"]`);
+  if (btn) btn.classList.add("active");
+  const sec = $("tab-" + tab);
+  if (sec) sec.classList.add("active");
+  const auth = tab === "rider" ? "rider-auth" : tab === "driver" ? "driver-auth" : "admin-auth";
+  const el = $(auth);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  else window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function showWelcome() { $("welcome").classList.remove("hidden"); }
 
 // ---- Map ----
 async function initMap() {
@@ -109,7 +145,7 @@ async function loadOffers() {
   if (!pending.length) { list.innerHTML = "<p class='muted'>Abhi koi pending offer nahi — driver counter-offer bhej sakta hai, thori der baad refresh karein.</p>"; }
   list.innerHTML = pending.map((o) => `
     <div class="offer">
-      <b>Rs ${o.fare}</b> — ${o.driver_name} ⭐ ${Number(o.driver_rating).toFixed(1)}<br>
+      <b>Rs ${o.fare}</b> — ${o.driver_name} ${ratingText(o.driver_rating, o.driver_rating_count, "driver")}<br>
       ${o.vehicle_model} • ${o.plate} • ETA ~${o.eta_min} min
       <br><button class="primary" onclick="acceptOffer(${o.id})">Ye driver chunein — Accept</button>
     </div>`).join("");
@@ -128,17 +164,136 @@ async function showTrip() {
   const r = d.ride;
   const drv = d.offers.find((o) => o.status === "accepted");
   $("trip-card").classList.remove("hidden");
+  // Driver live location — only during an active trip, only if fresh (< 3 min).
+  let locLine = "";
+  if (drv && (r.status === "accepted" || r.status === "ongoing")) {
+    const loc = d.driver_location;
+    const fresh = loc && loc.lat != null && loc.lng != null && loc.updated_at && Date.now() - loc.updated_at < 180000;
+    if (fresh) {
+      updateDriverMarker(loc.lat, loc.lng);
+      const target = r.status === "accepted" ? placeByName(r.pickup) : placeByName(r.destination);
+      let distTxt = "";
+      if (target) {
+        const km = haversineKm(loc.lat, loc.lng, target.lat, target.lng);
+        const eta = Math.max(1, Math.round((km / 30) * 60));
+        distTxt = ` • ${r.status === "accepted" ? "Pickup" : "Destination"} se ${km.toFixed(1)} km door, ETA ~${eta} min`;
+      }
+      locLine = `<p class="loc-line">📍 Driver live location${distTxt}</p>`;
+    } else {
+      clearDriverMarker();
+      locLine = `<p class="loc-line warn">📍 Driver ki live location nahi mil rahi — driver ne location share nahi ki ya GPS off hai.</p>`;
+    }
+  } else {
+    clearDriverMarker();
+  }
   $("trip-info").innerHTML = `
     <p><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} (${r.distance_km} km, ${r.vehicle_type})</p>
-    <p>Status: <b>${r.status}</b> • Fare: <b>Rs ${r.agreed_fare || r.suggested_fare}</b> (aap ne Rs ${r.proposed_fare} offer ki thi)</p>
-    ${drv ? `<p>Driver: <b>${drv.driver_name}</b> ⭐ ${Number(drv.driver_rating).toFixed(1)} — ${drv.vehicle_model}, ${drv.plate}, ETA ~${drv.eta_min} min</p>` : ""}
+    <p>Status: <span class="badge st-${r.status}">${r.status}</span> • Fare: <b>Rs ${r.agreed_fare || r.suggested_fare}</b> (aap ne Rs ${r.proposed_fare} offer ki thi)</p>
+    ${drv ? `<p>Driver: <b>${drv.driver_name}</b> ${ratingText(drv.driver_rating, drv.driver_rating_count, "driver")} — ${drv.vehicle_model}, ${drv.plate}, ETA ~${drv.eta_min} min</p>` : ""}
     <p>Cash driver ko dein. ${r.cash_confirmed ? "✅ Cash confirm ho gaya." : ""}</p>
+    ${locLine}
     ${r.status === "completed" ? "<p>✅ Ride mukammal — shukriya!</p>" : ""}`;
+  if (drv) {
+    $("chat-box").classList.remove("hidden");
+    loadChat();
+    ensureChatTimer();
+  } else {
+    $("chat-box").classList.add("hidden");
+  }
   if (r.status === "completed") {
     $("rate-box").classList.remove("hidden");
     $("rate-stars").innerHTML = [1, 2, 3, 4, 5].map((s) => `<button onclick="rateRide(${s})">⭐</button>`).join("");
   }
   if (r.status === "requested") setTimeout(loadOffers, 8000);
+  if (r.status === "accepted" || r.status === "ongoing") setTimeout(showTrip, 8000);
+}
+function updateDriverMarker(lat, lng) {
+  if (!map) return;
+  if (driverMarker) driverMarker.setLatLng([lat, lng]);
+  else driverMarker = L.marker([lat, lng]).addTo(map).bindPopup("Driver yahan hai — live location");
+}
+function clearDriverMarker() {
+  if (driverMarker && map) { map.removeLayer(driverMarker); driverMarker = null; }
+}
+
+// ---- In-ride chat (text only, rider <-> driver of this ride; no phone numbers) ----
+let chatTimer = null;
+function ensureChatTimer() {
+  if (chatTimer) return;
+  chatTimer = setInterval(() => {
+    if (currentRide && !$("trip-card").classList.contains("hidden") && !$("chat-box").classList.contains("hidden")) loadChat();
+    if (driverActiveRide && !$("driver-chat-card").classList.contains("hidden")) loadDriverChat();
+  }, 5000);
+}
+function renderChatList(el, msgs, myRole) {
+  if (!el) return;
+  el.innerHTML = msgs.length ? msgs.map((m) => `<div class="chat-msg ${m.sender_role === myRole ? "mine" : "theirs"}"><span>${escapeHtml(m.message)}</span><small>${new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></div>`).join("") : "<p class='muted'>Abhi koi message nahi.</p>";
+  el.scrollTop = el.scrollHeight;
+}
+async function loadChat() {
+  if (!currentRide || !store.rider) return;
+  try {
+    const d = await api(`/api/rides/${currentRide}/messages?user_id=${store.rider.id}`);
+    renderChatList($("chat-list"), d.messages, "rider");
+  } catch {}
+}
+async function sendChat() {
+  const input = $("chat-input");
+  const text = input.value.trim();
+  if (!text || !currentRide || !store.rider) return;
+  try {
+    await api(`/api/rides/${currentRide}/messages`, { method: "POST", body: JSON.stringify({ sender_id: store.rider.id, sender_role: "rider", message: text }) });
+    input.value = "";
+    loadChat();
+  } catch (e) { alert(e.message); }
+}
+async function loadDriverChat() {
+  if (!driverActiveRide || !store.driver) return;
+  try {
+    const d = await api(`/api/rides/${driverActiveRide.id}/messages?user_id=${store.driver.id}`);
+    renderChatList($("driver-chat-list"), d.messages, "driver");
+  } catch {}
+}
+async function sendDriverChat() {
+  const input = $("driver-chat-input");
+  const text = input.value.trim();
+  if (!text || !driverActiveRide || !store.driver) return;
+  try {
+    await api(`/api/rides/${driverActiveRide.id}/messages`, { method: "POST", body: JSON.stringify({ sender_id: store.driver.id, sender_role: "driver", message: text }) });
+    input.value = "";
+    loadDriverChat();
+  } catch (e) { alert(e.message); }
+}
+
+// ---- Driver live location sharing (phone GPS, only while online) ----
+let locWatchId = null, lastLocPost = 0;
+function setLocStatus(t) { const el = $("loc-status"); if (el) el.textContent = t; }
+function startLocationSharing() {
+  if (!("geolocation" in navigator)) { setLocStatus("Is phone par location (GPS) available nahi hai."); return; }
+  if (locWatchId !== null) return;
+  setLocStatus("📍 Live location share ho rahi hai…");
+  locWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      setLocStatus("📍 Live location share ho rahi hai");
+      const nowMs = Date.now();
+      if (nowMs - lastLocPost < 10000) return;
+      lastLocPost = nowMs;
+      postDriverLocation(pos.coords.latitude, pos.coords.longitude);
+    },
+    (err) => {
+      if (err.code === 1) setLocStatus("Location permission nahi mili — phone ki Settings mein location allow karein, warna rider ko aap ki live location nahi dikhe gi.");
+      else setLocStatus("Location nahi mil rahi — GPS on karein aur dobara koshish karein.");
+    },
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+  );
+}
+function stopLocationSharing() {
+  if (locWatchId !== null) { navigator.geolocation.clearWatch(locWatchId); locWatchId = null; }
+  setLocStatus("");
+}
+async function postDriverLocation(lat, lng) {
+  if (!store.driver) return;
+  try { await api(`/api/drivers/${store.driver.id}/location`, { method: "POST", body: JSON.stringify({ lat, lng }) }); } catch {}
 }
 async function rateRide(stars) {
   try { await api(`/api/rides/${currentRide}/rate`, { method: "POST", body: JSON.stringify({ by: "rider", stars }) }); alert("Shukriya! Rating save ho gayi."); } catch (e) { alert(e.message); }
@@ -181,8 +336,9 @@ async function driverLogin() {
 }
 function renderDriver() {
   const d = store.driver;
-  $("driver-info").innerHTML = `<p><b>${d.name}</b> — ${d.vehicle_type} • ${d.vehicle_model} • ${d.plate}<br>Status: <b>${d.status}</b> • Online: <b>${d.online ? "Yes" : "No"}</b> • Rating: ⭐ ${Number(d.rating).toFixed(1)} • Wallet: <b>Rs ${d.wallet_balance}</b></p>`;
+  $("driver-info").innerHTML = `<p><b>${d.name}</b> — ${d.vehicle_type} • ${d.vehicle_model} • ${d.plate}<br>Status: <b>${d.status}</b> • Online: <b>${d.online ? "Yes" : "No"}</b> • Rating: ${ratingText(d.rating, d.rating_count, "driver")} • Wallet: <b>Rs ${d.wallet_balance}</b></p>`;
   $("online-btn").textContent = d.online ? "Go Offline" : "Go Online";
+  if (d.online) startLocationSharing(); else stopLocationSharing();
   loadWallet();
 }
 async function toggleOnline() {
@@ -196,7 +352,7 @@ async function loadRequests() {
   const d = await api(`/api/drivers/${store.driver.id}/requests`);
   $("requests-list").innerHTML = d.requests.length ? d.requests.map((r) => `
     <div class="ride-row"><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} • ${r.vehicle_type} • ${r.distance_km} km<br>
-    Rider: ${r.rider_name} ⭐ ${Number(r.rider_rating).toFixed(1)} • Rider offer: <b>Rs ${r.proposed_fare}</b> (suggested Rs ${r.suggested_fare})<br>
+    Rider: ${r.rider_name} ${ratingText(r.rider_rating, r.rider_rating_count, "rider")} • Rider offer: <b>Rs ${r.proposed_fare}</b> (suggested Rs ${r.suggested_fare})<br>
     <button onclick="driverAccept(${r.id})">Accept (rider ki offer)</button>
     <input id="counter-${r.id}" type="number" placeholder="Counter-offer Rs" style="width:130px;display:inline-block">
     <button onclick="driverCounter(${r.id})">Counter-offer</button>
@@ -234,6 +390,17 @@ async function loadEarnings(days) {
 }
 async function loadDriverRides() {
   const d = await api(`/api/rides?driver_id=${store.driver.id}`);
+  const active = d.rides.find((r) => r.status === "accepted" || r.status === "ongoing");
+  driverActiveRide = active || null;
+  const card = $("driver-chat-card");
+  if (active) {
+    card.classList.remove("hidden");
+    $("driver-chat-who").textContent = `Ride #${active.id} — ${active.pickup} → ${active.destination} • Rider: ${active.rider_name || ""}`;
+    loadDriverChat();
+    ensureChatTimer();
+  } else {
+    card.classList.add("hidden");
+  }
   $("driver-rides").innerHTML = d.rides.length ? d.rides.map((r) => `
     <div class="ride-row"><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} • Rs ${r.agreed_fare || r.suggested_fare} • ${r.status}
     ${r.status === "accepted" ? ` <button onclick="startRide(${r.id})">Start Trip</button>` : ""}
@@ -281,7 +448,7 @@ async function adminLogin() {
 async function loadLiveDrivers() {
   try {
     const d = await api("/api/admin/live-drivers", { admin: true });
-    $("live-drivers").innerHTML = d.drivers.length ? d.drivers.map((x) => `<div class="driver-row">${x.name} — ${x.vehicle_type} • ${x.vehicle_model} • ${x.plate} • ⭐ ${Number(x.rating).toFixed(1)} • Wallet Rs ${x.wallet_balance} • (${x.lat}, ${x.lng})</div>`).join("") : "<p class='muted'>Koi driver online nahi.</p>";
+    $("live-drivers").innerHTML = d.drivers.length ? d.drivers.map((x) => `<div class="driver-row">${x.name} — ${x.vehicle_type} • ${x.vehicle_model} • ${x.plate} • ${ratingText(x.rating, x.rating_count, "driver")} • Wallet Rs ${x.wallet_balance} • (${x.lat}, ${x.lng})</div>`).join("") : "<p class='muted'>Koi driver online nahi.</p>";
   } catch (e) { $("live-drivers").textContent = e.message; }
 }
 async function loadAdminRides() {
@@ -290,7 +457,7 @@ async function loadAdminRides() {
 }
 async function loadAdminDrivers() {
   const d = await api("/api/admin/drivers", { admin: true });
-  $("admin-drivers").innerHTML = d.drivers.map((x) => `<div class="driver-row"><b>${x.name}</b> (${x.phone}) — ${x.vehicle_type} • ${x.vehicle_model} • ${x.plate}<br>CNIC: ${x.cnic} • Licence: ${x.licence} • Reg: ${x.vehicle_reg}<br>Status: <b>${x.status}</b> • Wallet Rs ${x.wallet_balance} • Online: ${x.online ? "Yes" : "No"}<br>
+  $("admin-drivers").innerHTML = d.drivers.map((x) => `<div class="driver-row"><b>${x.name}</b> (${x.phone}) — ${x.vehicle_type} • ${x.vehicle_model} • ${x.plate}<br>CNIC: ${x.cnic} • Licence: ${x.licence} • Reg: ${x.vehicle_reg}<br>Status: <b>${x.status}</b> • Rating: ${ratingText(x.rating, x.rating_count, "driver")}${x.demo ? " • Demo driver" : ""} • Wallet Rs ${x.wallet_balance} • Online: ${x.online ? "Yes" : "No"}<br>
     ${x.status !== "approved" ? `<button onclick="adminDriver(${x.user_id},'approve')">Approve</button>` : ""} ${x.status !== "blocked" ? `<button onclick="adminDriver(${x.user_id},'block')">Block</button>` : ""}</div>`).join("");
 }
 async function adminDriver(id, action) {
@@ -328,3 +495,6 @@ async function loadProfit() {
 
 initMap();
 if (store.rider) { $("rider-name").value = store.rider.name; $("rider-phone").value = store.rider.phone; $("rider-who").textContent = `${store.rider.name} (${store.rider.phone}) — ID #${store.rider.id}`; }
+
+// Login-first: show the welcome screen unless a rider/driver session already exists.
+if (store.rider || store.driver) $("welcome").classList.add("hidden");

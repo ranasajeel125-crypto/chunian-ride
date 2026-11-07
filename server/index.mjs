@@ -120,12 +120,28 @@ app.post("/api/drivers/:id/online", async (req, res) => {
   res.json({ online: !!online });
 });
 
+// Driver live location — the driver app posts phone GPS while online.
+app.post("/api/drivers/:id/location", async (req, res) => {
+  const { lat, lng } = req.body || {};
+  const la = Number(lat), ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln) || la < -90 || la > 90 || ln < -180 || ln > 180) {
+    return res.status(400).json({ error: "valid lat/lng required" });
+  }
+  const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
+  if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
+  await client.execute({
+    sql: "UPDATE drivers SET lat = ?, lng = ?, loc_updated_at = ? WHERE user_id = ?",
+    args: [la, ln, now(), num(req.params.id)],
+  });
+  res.json({ ok: true });
+});
+
 // Driver sees open requests for their vehicle type, with rider rating, BEFORE accepting.
 app.get("/api/drivers/:id/requests", async (req, res) => {
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
   const rows = await client.execute({
-    sql: `SELECT r.*, u.name AS rider_name, u.phone AS rider_phone, u.rating AS rider_rating
+    sql: `SELECT r.*, u.name AS rider_name, u.phone AS rider_phone, u.rating AS rider_rating, u.rating_count AS rider_rating_count
           FROM rides r JOIN users u ON u.id = r.rider_id
           WHERE r.status = 'requested' AND r.vehicle_type = ?
           ORDER BY r.created_at DESC`,
@@ -213,12 +229,47 @@ app.get("/api/rides/:id", async (req, res) => {
   const ride = await client.execute({ sql: "SELECT * FROM rides WHERE id = ?", args: [num(req.params.id)] });
   if (!ride.rows.length) return res.status(404).json({ error: "ride not found" });
   const offers = await client.execute({
-    sql: `SELECT o.*, u.name AS driver_name, u.rating AS driver_rating, d.vehicle_model, d.plate
+    sql: `SELECT o.*, u.name AS driver_name, u.rating AS driver_rating, u.rating_count AS driver_rating_count, d.vehicle_model, d.plate
           FROM offers o JOIN users u ON u.id = o.driver_id JOIN drivers d ON d.user_id = o.driver_id
           WHERE o.ride_id = ? ORDER BY o.fare ASC`,
     args: [num(req.params.id)],
   });
-  res.json({ ride: ride.rows[0], offers: offers.rows });
+  // Driver live location for the rider's map (only when a driver is assigned).
+  let driverLocation = null;
+  if (ride.rows[0].driver_id) {
+    const dl = await client.execute({ sql: "SELECT lat, lng, loc_updated_at FROM drivers WHERE user_id = ?", args: [num(ride.rows[0].driver_id)] });
+    if (dl.rows.length) driverLocation = { lat: dl.rows[0].lat, lng: dl.rows[0].lng, updated_at: dl.rows[0].loc_updated_at };
+  }
+  res.json({ ride: ride.rows[0], offers: offers.rows, driver_location: driverLocation });
+});
+
+// ---- In-ride chat (text only, rider <-> driver of this ride; no phone numbers) ----
+app.post("/api/rides/:id/messages", async (req, res) => {
+  const { sender_id, sender_role, message } = req.body || {};
+  const text = String(message || "").trim();
+  if (!text || text.length > 500) return res.status(400).json({ error: "message must be 1-500 characters" });
+  const ride = await client.execute({ sql: "SELECT * FROM rides WHERE id = ?", args: [num(req.params.id)] });
+  if (!ride.rows.length) return res.status(404).json({ error: "ride not found" });
+  const r = ride.rows[0];
+  const ok = (sender_role === "rider" && num(sender_id) === r.rider_id) || (sender_role === "driver" && num(sender_id) === r.driver_id);
+  if (!ok) return res.status(403).json({ error: "only the rider or driver of this ride can chat here" });
+  const ins = await client.execute({
+    sql: "INSERT INTO ride_messages(ride_id, sender_role, sender_id, message, created_at) VALUES (?, ?, ?, ?, ?)",
+    args: [num(req.params.id), sender_role, num(sender_id), text, now()],
+  });
+  res.json({ message_id: Number(ins.lastInsertRowid) });
+});
+app.get("/api/rides/:id/messages", async (req, res) => {
+  const userId = num(req.query.user_id, 0);
+  const ride = await client.execute({ sql: "SELECT * FROM rides WHERE id = ?", args: [num(req.params.id)] });
+  if (!ride.rows.length) return res.status(404).json({ error: "ride not found" });
+  const r = ride.rows[0];
+  if (userId !== r.rider_id && userId !== r.driver_id) return res.status(403).json({ error: "only the rider or driver of this ride can read this chat" });
+  const rows = await client.execute({
+    sql: "SELECT id, sender_role, sender_id, message, created_at FROM ride_messages WHERE ride_id = ? ORDER BY created_at ASC LIMIT 50",
+    args: [num(req.params.id)],
+  });
+  res.json({ messages: rows.rows });
 });
 
 app.get("/api/rides", async (req, res) => {
@@ -410,7 +461,7 @@ app.get("/api/admin/rides", requireAdmin, async (req, res) => {
 
 app.get("/api/admin/live-drivers", requireAdmin, async (req, res) => {
   const rows = await client.execute({
-    sql: `SELECT d.*, u.name, u.phone, u.rating FROM drivers d JOIN users u ON u.id = d.user_id WHERE d.online = 1 AND d.status = 'approved'`,
+    sql: `SELECT d.*, u.name, u.phone, u.rating, u.rating_count FROM drivers d JOIN users u ON u.id = d.user_id WHERE d.online = 1 AND d.status = 'approved'`,
   });
   res.json({ drivers: rows.rows });
 });

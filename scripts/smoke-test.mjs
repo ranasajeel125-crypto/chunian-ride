@@ -101,6 +101,30 @@ async function main() {
   const sos = await call(`/api/rides/${ride.ride_id}/sos`, { method: "POST", body: JSON.stringify({ user_id: rider.user.id, message: "smoke SOS" }) });
   check("SOS returns Police 15 / Rescue 1122", sos.police === "15" && sos.rescue === "1122");
 
+  // In-ride chat: rider sends, driver reads; driver replies, rider reads.
+  const chat1 = await call(`/api/rides/${ride.ride_id}/messages`, { method: "POST", body: JSON.stringify({ sender_id: rider.user.id, sender_role: "rider", message: "Assalam-o-Alaikum, main pickup par khara hoon." }) });
+  check("rider chat message sent", !!chat1.message_id, `id=${chat1.message_id}`);
+  const chatAsDriver = await call(`/api/rides/${ride.ride_id}/messages?user_id=${driverId}`);
+  check("driver can read ride chat", chatAsDriver.messages.some((m) => m.message.includes("pickup par")));
+  const chat2 = await call(`/api/rides/${ride.ride_id}/messages`, { method: "POST", body: JSON.stringify({ sender_id: driverId, sender_role: "driver", message: "5 minute mein aa raha hoon." }) });
+  check("driver chat reply sent", !!chat2.message_id);
+  const chatAsRider = await call(`/api/rides/${ride.ride_id}/messages?user_id=${rider.user.id}`);
+  check("rider can read driver reply", chatAsRider.messages.length === 2, `got ${chatAsRider.messages.length}`);
+  let chatBlocked = false;
+  try { await call(`/api/rides/${ride.ride_id}/messages?user_id=999999`); } catch { chatBlocked = true; }
+  check("chat is private to the ride's rider/driver", chatBlocked);
+
+  // Live location: driver posts GPS, ride detail carries it.
+  const loc = await call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 74.03 }) });
+  check("driver location posted", loc.ok === true);
+  const detail2 = await call(`/api/rides/${ride.ride_id}`);
+  check("ride detail carries live driver location", detail2.driver_location && detail2.driver_location.lat === 30.97, JSON.stringify(detail2.driver_location));
+
+  // No fake ratings: a demo driver with no completed-ride rating has count 0.
+  const allDrivers = await call("/api/admin/drivers", { admin: true });
+  const hassan = allDrivers.drivers.find((x) => x.name === "Hassan Ali");
+  check("unrated demo driver shows no fake rating (count 0)", !!hassan && hassan.rating_count === 0, `count=${hassan && hassan.rating_count}`);
+
   // Driver earnings (today): the smoke ride (Rs 950, fee Rs 134) PLUS the
   // seeded demo ride for the same driver (Usman, Rs 980, fee Rs 138, ~23.5h ago).
   const earn = await call(`/api/drivers/${driverId}/earnings?days=1`);

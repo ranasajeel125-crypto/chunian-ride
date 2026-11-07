@@ -78,7 +78,7 @@ const STATEMENTS = [
     status TEXT NOT NULL DEFAULT 'pending',
     online INTEGER NOT NULL DEFAULT 0,
     wallet_balance INTEGER NOT NULL DEFAULT 0,
-    lat REAL, lng REAL,
+    lat REAL, lng REAL, loc_updated_at INTEGER,
     created_at INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS rides (
@@ -129,6 +129,14 @@ const STATEMENTS = [
     status TEXT NOT NULL DEFAULT 'open',
     created_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS ride_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ride_id INTEGER NOT NULL REFERENCES rides(id),
+    sender_role TEXT NOT NULL,
+    sender_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
 ];
 
 function haversineKm(a, b) {
@@ -175,6 +183,8 @@ export function platformTake(settings, fare) {
 
 export async function initDb() {
   for (const s of STATEMENTS) await client.execute(s);
+  // Additive migration for DBs created before loc_updated_at existed.
+  try { await client.execute("ALTER TABLE drivers ADD COLUMN loc_updated_at INTEGER"); } catch { /* column already exists */ }
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
     await client.execute({
       sql: "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",
@@ -192,9 +202,11 @@ export async function initDb() {
     { name: "Hassan Ali", phone: "0301-0000004", vehicle: "car", model: "Suzuki Alto", plate: "DEMO-CAR-02", wallet: 2000 },
   ];
   const driverUserIds = {};
+  // Demo drivers start with NO rating (rating 0, count 0) — stars only ever
+  // come from real completed rides. Never seed fake ratings.
   for (const d of demoDrivers) {
     const u = await client.execute({
-      sql: "INSERT INTO users(name, phone, role, rating, rating_count, demo, created_at) VALUES (?, ?, 'driver', 4.8, 12, 1, ?)",
+      sql: "INSERT INTO users(name, phone, role, rating, rating_count, demo, created_at) VALUES (?, ?, 'driver', 0, 0, 1, ?)",
       args: [d.name, d.phone, now],
     });
     const userId = Number(u.lastInsertRowid);
@@ -209,7 +221,7 @@ export async function initDb() {
     });
   }
   const rider = await client.execute({
-    sql: "INSERT INTO users(name, phone, role, rating, rating_count, demo, created_at) VALUES ('Demo Rider', '0300-0000000', 'rider', 5.0, 2, 1, ?)",
+    sql: "INSERT INTO users(name, phone, role, rating, rating_count, demo, created_at) VALUES ('Demo Rider', '0300-0000000', 'rider', 0, 0, 1, ?)",
     args: [now],
   });
   const riderId = Number(rider.lastInsertRowid);
