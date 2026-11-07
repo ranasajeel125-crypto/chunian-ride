@@ -179,18 +179,27 @@ app.get("/api/drivers/:id/earnings", async (req, res) => {
   const days = num(req.query.days, 1);
   const since = now() - days * 86400000;
   const rows = await client.execute({
-    sql: "SELECT COUNT(*) AS rides, COALESCE(SUM(agreed_fare),0) AS gross, COALESCE(SUM(commission_charged),0) AS fees FROM rides WHERE driver_id = ? AND status = 'completed' AND completed_at >= ?",
+    sql: "SELECT COUNT(*) AS rides, COALESCE(SUM(agreed_fare),0) AS gross, COALESCE(SUM(commission_charged),0) AS fees, COALESCE(SUM(tip_amount),0) AS tips FROM rides WHERE driver_id = ? AND status = 'completed' AND completed_at >= ?",
     args: [num(req.params.id), since],
   });
   const r = rows.rows[0];
-  res.json({ days, rides: Number(r.rides), gross_fares: Number(r.gross), platform_fees: Number(r.fees), driver_kept: Number(r.gross) - Number(r.fees) });
+  // Tips go 100% to the driver — no commission on tips.
+  res.json({ days, rides: Number(r.rides), gross_fares: Number(r.gross), platform_fees: Number(r.fees), tips: Number(r.tips), driver_kept: Number(r.gross) - Number(r.fees) + Number(r.tips) });
 });
 
 // ---- Rides ----
 app.post("/api/rides", async (req, res) => {
-  const { rider_id, pickup, destination, vehicle, proposed_fare, distance_km } = req.body || {};
+  const { rider_id, pickup, destination, vehicle, proposed_fare, distance_km, scheduled_for } = req.body || {};
   if (!rider_id || !pickup || !destination || !VEHICLES.includes(vehicle)) {
     return res.status(400).json({ error: "rider_id, pickup, destination and vehicle are required" });
+  }
+  // Scheduled ride (book for later, inDrive-style): optional epoch ms.
+  // Must be in the future and within the next 7 days.
+  let sched = null;
+  if (scheduled_for != null && scheduled_for !== "") {
+    sched = num(scheduled_for, 0);
+    if (!Number.isFinite(sched) || sched <= now()) return res.status(400).json({ error: "scheduled time must be in the future" });
+    if (sched > now() + 7 * 86400000) return res.status(400).json({ error: "you can only book up to 7 days ahead" });
   }
   let km = num(distance_km, 0);
   let estimated = false;
@@ -204,8 +213,8 @@ app.post("/api/rides", async (req, res) => {
   const suggested = fareFor(s, vehicle, km);
   const proposed = Math.max(1, num(proposed_fare, suggested));
   const r = await client.execute({
-    sql: "INSERT INTO rides(rider_id, pickup, destination, distance_km, distance_estimated, vehicle_type, suggested_fare, proposed_fare, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?)",
-    args: [num(rider_id), pickup, destination, km, estimated ? 1 : 0, vehicle, suggested, proposed, now()],
+    sql: "INSERT INTO rides(rider_id, pickup, destination, distance_km, distance_estimated, vehicle_type, suggested_fare, proposed_fare, scheduled_for, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?)",
+    args: [num(rider_id), pickup, destination, km, estimated ? 1 : 0, vehicle, suggested, proposed, sched, now()],
   });
   const rideId = Number(r.lastInsertRowid);
   // inDrive-style: every online, approved driver of this vehicle with a
@@ -222,7 +231,7 @@ app.post("/api/rides", async (req, res) => {
       args: [rideId, drv.user_id, offerFare, 5 + i * 3, now()],
     });
   }
-  res.json({ ride_id: rideId, suggested_fare: suggested, proposed_fare: proposed, distance_km: km, distance_estimated: estimated, offers_created: drivers.rows.length });
+  res.json({ ride_id: rideId, suggested_fare: suggested, proposed_fare: proposed, scheduled_for: sched, distance_km: km, distance_estimated: estimated, offers_created: drivers.rows.length });
 });
 
 app.get("/api/rides/:id", async (req, res) => {
@@ -375,6 +384,30 @@ app.post("/api/rides/:id/cancel", async (req, res) => {
   if (ride.rows[0].status === "completed") return res.status(400).json({ error: "completed ride cannot be cancelled" });
   await client.execute({ sql: "UPDATE rides SET status='cancelled' WHERE id = ?", args: [num(req.params.id)] });
   res.json({ status: "cancelled" });
+});
+
+// Tip after a completed ride — goes 100% to the driver, NO commission on tips.
+// Only the ride's own rider can tip, only once, only after completion.
+app.post("/api/rides/:id/tip", async (req, res) => {
+  const { rider_id, amount } = req.body || {};
+  const tip = Math.round(num(amount, 0));
+  if (tip <= 0) return res.status(400).json({ error: "tip must be more than 0" });
+  if (tip > 5000) return res.status(400).json({ error: "tip cannot be more than Rs 5000" });
+  const ride = await client.execute({ sql: "SELECT * FROM rides WHERE id = ?", args: [num(req.params.id)] });
+  if (!ride.rows.length) return res.status(404).json({ error: "ride not found" });
+  const r = ride.rows[0];
+  if (r.status !== "completed") return res.status(400).json({ error: "tip can only be added after the ride is completed" });
+  if (num(rider_id) !== r.rider_id) return res.status(403).json({ error: "only the rider of this ride can add a tip" });
+  if (Number(r.tip_amount || 0) > 0) return res.status(400).json({ error: "tip already added for this ride" });
+  // Tip is cash, paid rider -> driver directly (like the fare itself):
+  // it is recorded on the ride and shown in earnings/receipts, but it is
+  // NOT added to the prepaid wallet balance (that balance is only money
+  // the driver deposited for commission). 100% driver, 0% commission.
+  await client.execute({
+    sql: "UPDATE rides SET tip_amount = ? WHERE id = ?",
+    args: [tip, num(req.params.id)],
+  });
+  res.json({ ride_id: num(req.params.id), tip, commission_on_tip: 0, note: "Tip 100% driver ko — is par koi commission nahi." });
 });
 
 // Rate driver (by rider) or rate rider (by driver).

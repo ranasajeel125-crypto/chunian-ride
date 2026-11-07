@@ -185,6 +185,9 @@ export async function initDb() {
   for (const s of STATEMENTS) await client.execute(s);
   // Additive migration for DBs created before loc_updated_at existed.
   try { await client.execute("ALTER TABLE drivers ADD COLUMN loc_updated_at INTEGER"); } catch { /* column already exists */ }
+  // Additive columns for scheduled rides + tips (inDrive-style features, 2026-11-07).
+  try { await client.execute("ALTER TABLE rides ADD COLUMN scheduled_for INTEGER"); } catch { /* column already exists */ }
+  try { await client.execute("ALTER TABLE rides ADD COLUMN tip_amount INTEGER NOT NULL DEFAULT 0"); } catch { /* column already exists */ }
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
     await client.execute({
       sql: "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)",

@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap">
-<link rel="stylesheet" href="/style.css?v=3">
+<link rel="stylesheet" href="/style.css?v=4">
 <link rel="icon" type="image/png" href="/favicon.png">
 </head>
 <body>
@@ -80,6 +80,12 @@
       <div id="propose-box" class="hidden">
         <label>Apni fare offer karein (Rs) — Rider proposes a fare</label>
         <input id="proposed-fare" type="number" min="1">
+        <label>🕐 Baad ke liye book karein — optional (7 din tak)</label>
+        <div class="row3">
+          <input id="sched-date" type="date">
+          <input id="sched-time" type="time">
+        </div>
+        <p class="muted">Khali chhor dein to ride abhi ki hai. Date + time dein to Scheduled ride ban jaye gi.</p>
         <button class="primary" onclick="requestRide()">Ride Request karein</button>
       </div>
     </div>
@@ -113,6 +119,20 @@
       <div id="rate-box" class="hidden">
         <h3>Driver ko rate karein</h3>
         <div class="stars" id="rate-stars"></div>
+      </div>
+      <div id="tip-box" class="tip-box hidden">
+        <h3>💰 Tip dein — Driver ko shukriya</h3>
+        <p class="muted">Tip 100% driver ko milti hai — is par koi commission nahi kat-ti.</p>
+        <div class="tip-btns">
+          <button onclick="addTip(20)">Rs 20</button>
+          <button onclick="addTip(50)">Rs 50</button>
+          <button onclick="addTip(100)">Rs 100</button>
+        </div>
+        <div class="chat-input-row">
+          <input id="tip-custom" type="number" min="1" max="5000" placeholder="Apni marzi ki tip (Rs)">
+          <button onclick="addTipCustom()">Tip dein</button>
+        </div>
+        <p class="muted" id="tip-out"></p>
       </div>
     </div>
 
@@ -304,6 +324,6 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/app.js?v=2"></script>
+<script src="/app.js?v=3"></script>
 </body>
 </html>

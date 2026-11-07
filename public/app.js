@@ -33,6 +33,16 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 function placeByName(name) { return places.find((p) => p.name === name) || null; }
+function fmtSched(ts) {
+  if (!ts) return "";
+  return new Date(ts).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function schedLine(ts) {
+  return ts ? `<p class="sched-line">🕐 Scheduled: <b>${fmtSched(ts)}</b></p>` : "";
+}
+function tipLine(tip) {
+  return tip ? ` • 💰 Tip Rs ${tip} (100% driver)` : "";
+}
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json", ...(opts.admin ? { "X-Admin-Pin": store.pin } : {}) }, ...opts });
@@ -129,12 +139,22 @@ async function requestRide() {
   const body = { rider_id: store.rider.id, pickup: $("pickup").value, destination: $("destination").value, vehicle, proposed_fare: Number($("proposed-fare").value) || fareEstimate.suggested_fare };
   const km = $("distance").value.trim();
   if (km) body.distance_km = Number(km);
+  // Scheduled ride (optional): date + time, within the next 7 days.
+  const sd = $("sched-date").value, st = $("sched-time").value;
+  if (sd || st) {
+    if (!sd || !st) return alert("Scheduled ride ke liye date aur time dono dein.");
+    const when = new Date(sd + "T" + st).getTime();
+    if (!Number.isFinite(when)) return alert("Date/time theek nahi hai.");
+    if (when <= Date.now()) return alert("Scheduled time aane wala waqt hona chahiye.");
+    if (when > Date.now() + 7 * 86400000) return alert("Sirf 7 din tak ki booking ho sakti hai.");
+    body.scheduled_for = when;
+  }
   try {
     const d = await api("/api/rides", { method: "POST", body: JSON.stringify(body) });
     currentRide = d.ride_id;
     $("offers-card").classList.remove("hidden");
     await loadOffers();
-    alert(`Ride request bhej di (Ride #${d.ride_id}). ${d.offers_created} driver(s) online hain.`);
+    alert(`Ride request bhej di (Ride #${d.ride_id})${d.scheduled_for ? " — Scheduled: " + fmtSched(d.scheduled_for) : ""}. ${d.offers_created} driver(s) online hain.`);
   } catch (e) { alert(e.message); }
 }
 async function loadOffers() {
@@ -188,7 +208,8 @@ async function showTrip() {
   }
   $("trip-info").innerHTML = `
     <p><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} (${r.distance_km} km, ${r.vehicle_type})</p>
-    <p>Status: <span class="badge st-${r.status}">${r.status}</span> • Fare: <b>Rs ${r.agreed_fare || r.suggested_fare}</b> (aap ne Rs ${r.proposed_fare} offer ki thi)</p>
+    ${schedLine(r.scheduled_for)}
+    <p>Status: <span class="badge st-${r.status}">${r.status}</span> • Fare: <b>Rs ${r.agreed_fare || r.suggested_fare}</b> (aap ne Rs ${r.proposed_fare} offer ki thi)${tipLine(r.tip_amount)}</p>
     ${drv ? `<p>Driver: <b>${drv.driver_name}</b> ${ratingText(drv.driver_rating, drv.driver_rating_count, "driver")} — ${drv.vehicle_model}, ${drv.plate}, ETA ~${drv.eta_min} min</p>` : ""}
     <p>Cash driver ko dein. ${r.cash_confirmed ? "✅ Cash confirm ho gaya." : ""}</p>
     ${locLine}
@@ -203,6 +224,15 @@ async function showTrip() {
   if (r.status === "completed") {
     $("rate-box").classList.remove("hidden");
     $("rate-stars").innerHTML = [1, 2, 3, 4, 5].map((s) => `<button onclick="rateRide(${s})">⭐</button>`).join("");
+    // Tip box: only while no tip has been added yet.
+    if (!r.tip_amount) {
+      $("tip-box").classList.remove("hidden");
+      $("tip-out").textContent = "";
+    } else {
+      $("tip-box").classList.add("hidden");
+    }
+  } else {
+    $("tip-box").classList.add("hidden");
   }
   if (r.status === "requested") setTimeout(loadOffers, 8000);
   if (r.status === "accepted" || r.status === "ongoing") setTimeout(showTrip, 8000);
@@ -298,6 +328,23 @@ async function postDriverLocation(lat, lng) {
 async function rateRide(stars) {
   try { await api(`/api/rides/${currentRide}/rate`, { method: "POST", body: JSON.stringify({ by: "rider", stars }) }); alert("Shukriya! Rating save ho gayi."); } catch (e) { alert(e.message); }
 }
+// Tip after a completed ride — 100% driver, no commission on tips.
+async function addTip(amount) {
+  if (!currentRide || !store.rider) return;
+  const tip = Math.round(Number(amount));
+  if (!tip || tip <= 0) return alert("Tip ki raqam likhein.");
+  try {
+    const d = await api(`/api/rides/${currentRide}/tip`, { method: "POST", body: JSON.stringify({ rider_id: store.rider.id, amount: tip }) });
+    $("tip-out").textContent = `Shukriya! Tip Rs ${d.tip} driver ko mil gayi — is par koi commission nahi kati.`;
+    $("tip-box").classList.add("hidden");
+    showTrip();
+  } catch (e) { alert(e.message); }
+}
+async function addTipCustom() {
+  const v = Number($("tip-custom").value);
+  if (!v || v <= 0) return alert("Tip ki raqam likhein.");
+  addTip(v);
+}
 async function shareTrip() {
   if (!currentRide) return alert("Koi active ride nahi.");
   const d = await api(`/api/rides/${currentRide}/share`);
@@ -317,7 +364,8 @@ async function loadHistory() {
   const d = await api(`/api/rides?rider_id=${store.rider.id}`);
   $("history-list").innerHTML = d.rides.length ? d.rides.map((r) => `
     <div class="ride-row"><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} • ${r.vehicle_type} • ${r.distance_km} km<br>
-    Fare Rs ${r.agreed_fare || r.suggested_fare} • Status: ${r.status}${r.commission_charged ? ` • Platform fee Rs ${r.commission_charged}` : ""}<br>
+    Fare Rs ${r.agreed_fare || r.suggested_fare}${tipLine(r.tip_amount)} • Status: ${r.status}${r.commission_charged ? ` • Platform fee Rs ${r.commission_charged}` : ""}<br>
+    ${r.scheduled_for ? `🕐 Scheduled: ${fmtSched(r.scheduled_for)}<br>` : ""}
     <span class="muted">${new Date(r.created_at).toLocaleString()}</span></div>`).join("") : "<p class='muted'>Koi ride nahi mili.</p>";
 }
 
@@ -350,16 +398,30 @@ async function toggleOnline() {
 }
 async function loadRequests() {
   const d = await api(`/api/drivers/${store.driver.id}/requests`);
-  $("requests-list").innerHTML = d.requests.length ? d.requests.map((r) => `
+  $("requests-list").innerHTML = d.requests.length ? d.requests.map((r) => {
+    // inDrive-style quick counter buttons: +10% / +15% / +20% of the rider's offer.
+    const quick = [10, 15, 20].map((pct) => {
+      const amt = Math.round((r.proposed_fare * (100 + pct)) / 100);
+      return `<button class="quick-btn" onclick="setCounter(${r.id}, ${amt})">+${pct}% · Rs ${amt}</button>`;
+    }).join("");
+    return `
     <div class="ride-row"><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} • ${r.vehicle_type} • ${r.distance_km} km<br>
+    ${r.scheduled_for ? `<span class="sched-badge">🕐 Scheduled: ${fmtSched(r.scheduled_for)}</span><br>` : ""}
     Rider: ${r.rider_name} ${ratingText(r.rider_rating, r.rider_rating_count, "rider")} • Rider offer: <b>Rs ${r.proposed_fare}</b> (suggested Rs ${r.suggested_fare})<br>
     <button onclick="driverAccept(${r.id})">Accept (rider ki offer)</button>
     <input id="counter-${r.id}" type="number" placeholder="Counter-offer Rs" style="width:130px;display:inline-block">
     <button onclick="driverCounter(${r.id})">Counter-offer</button>
+    <div class="quick-row">${quick}</div>
     <button onclick="driverDecline(${r.id})">Decline (koi penalty nahi)</button>
     <a target="_blank" href="https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(r.pickup + ", Chunian")}&destination=${encodeURIComponent(r.destination)}">🗺️ Google Maps</a>
     <a target="_blank" href="https://www.openstreetmap.org/directions?from=${encodeURIComponent(r.pickup)}&to=${encodeURIComponent(r.destination)}">OSM</a>
-    </div>`).join("") : "<p class='muted'>Koi open request nahi.</p>";
+    </div>`;
+  }).join("") : "<p class='muted'>Koi open request nahi.</p>";
+}
+// Quick counter-offer: fill the counter input with the computed amount.
+function setCounter(rideId, amount) {
+  const el = $("counter-" + rideId);
+  if (el) { el.value = amount; el.focus(); }
 }
 async function driverAccept(rideId) {
   const d = await api(`/api/rides/${rideId}`);
@@ -386,7 +448,7 @@ async function topup() {
 }
 async function loadEarnings(days) {
   const d = await api(`/api/drivers/${store.driver.id}/earnings?days=${days}`);
-  $("earnings-info").innerHTML = `<p>${days === 1 ? "Aaj" : days + " din"}: ${d.rides} rides • Gross fares Rs ${d.gross_fares} • Platform fees Rs ${d.platform_fees} • <b>Aap ne rakha: Rs ${d.driver_kept}</b></p>`;
+  $("earnings-info").innerHTML = `<p>${days === 1 ? "Aaj" : days + " din"}: ${d.rides} rides • Gross fares Rs ${d.gross_fares} • Platform fees Rs ${d.platform_fees} • Tips Rs ${d.tips || 0} (100% driver, no commission) • <b>Aap ne rakha: Rs ${d.driver_kept}</b></p>`;
 }
 async function loadDriverRides() {
   const d = await api(`/api/rides?driver_id=${store.driver.id}`);
@@ -402,7 +464,8 @@ async function loadDriverRides() {
     card.classList.add("hidden");
   }
   $("driver-rides").innerHTML = d.rides.length ? d.rides.map((r) => `
-    <div class="ride-row"><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} • Rs ${r.agreed_fare || r.suggested_fare} • ${r.status}
+    <div class="ride-row"><b>Ride #${r.id}</b> — ${r.pickup} → ${r.destination} • Rs ${r.agreed_fare || r.suggested_fare}${tipLine(r.tip_amount)} • ${r.status}
+    ${r.scheduled_for ? `<br>🕐 Scheduled: ${fmtSched(r.scheduled_for)}` : ""}
     ${r.status === "accepted" ? ` <button onclick="startRide(${r.id})">Start Trip</button>` : ""}
     ${r.status === "ongoing" ? ` <label><input type="checkbox" id="cash-${r.id}" style="width:auto"> Cash mil gaya</label> <button onclick="completeRide(${r.id})">End Trip — Cash Confirm</button>` : ""}
     ${r.status === "completed" ? ` <button onclick="rateRider(${r.id})">Rider ko 5⭐ dein</button>` : ""}
@@ -453,7 +516,7 @@ async function loadLiveDrivers() {
 }
 async function loadAdminRides() {
   const d = await api("/api/admin/rides", { admin: true });
-  $("admin-rides").innerHTML = d.rides.map((r) => `<div class="ride-row"><b>#${r.id}</b> ${r.rider_name} → ${r.driver_name || "—"} • ${r.pickup} → ${r.destination} • ${r.vehicle_type} • Rs ${r.agreed_fare || r.suggested_fare} • ${r.status}${r.commission_charged ? ` • Fee Rs ${r.commission_charged}` : ""}</div>`).join("") || "<p class='muted'>Koi ride nahi.</p>";
+  $("admin-rides").innerHTML = d.rides.map((r) => `<div class="ride-row"><b>#${r.id}</b> ${r.rider_name} → ${r.driver_name || "—"} • ${r.pickup} → ${r.destination} • ${r.vehicle_type} • Rs ${r.agreed_fare || r.suggested_fare}${tipLine(r.tip_amount)} • ${r.status}${r.commission_charged ? ` • Fee Rs ${r.commission_charged}` : ""}${r.scheduled_for ? `<br>🕐 Scheduled: ${fmtSched(r.scheduled_for)}` : ""}</div>`).join("") || "<p class='muted'>Koi ride nahi.</p>";
 }
 async function loadAdminDrivers() {
   const d = await api("/api/admin/drivers", { admin: true });

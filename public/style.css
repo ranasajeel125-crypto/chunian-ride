@@ -504,3 +504,50 @@ footer { border-top: 1px solid var(--line); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* ============ inDrive features (2026-11-07): quick counter buttons, scheduled rides, tips ============ */
+/* Quick counter-offer buttons: +10% / +15% / +20% of the rider's offer */
+.quick-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 2px; }
+.quick-btn {
+  background: var(--green-050) !important;
+  border: 1.5px solid var(--green-200) !important;
+  color: var(--green) !important;
+  border-radius: 999px !important;
+  padding: 7px 13px !important;
+  font-weight: 700 !important;
+  font-size: 13.5px !important;
+  margin: 0 !important;
+}
+.quick-btn:active { background: var(--green-100) !important; transform: scale(.97); }
+@media (hover: hover) { .quick-btn:hover { background: var(--green-100) !important; } }
+
+/* Scheduled ride badge + line */
+.sched-badge {
+  display: inline-block;
+  background: #fff3cd;
+  color: #7a5b00;
+  border: 1px solid #ecd27a;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12.5px;
+  font-weight: 700;
+  margin: 2px 0;
+}
+.sched-line { background: #fff8e1; border: 1px solid #ecd27a; border-radius: 10px; padding: 9px 11px; font-size: 13.5px; }
+
+/* Tip box after a completed ride */
+.tip-box { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.tip-box h3 { margin: 0 0 2px; }
+.tip-btns { display: flex; gap: 8px; margin: 10px 0; }
+.tip-btns button {
+  flex: 1;
+  background: var(--green-050);
+  border: 1.5px solid var(--green-200);
+  color: var(--green-dark);
+  border-radius: 12px;
+  padding: 11px 6px;
+  font-weight: 800;
+  font-size: 15px;
+  margin: 0;
+}
+.tip-btns button:active { background: var(--green-100); transform: scale(.97); }

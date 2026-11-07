@@ -157,11 +157,50 @@ async function main() {
   const allRides = await call("/api/admin/rides", { admin: true });
   check("2 seeded demo rides + smoke ride present", allRides.rides.length >= 3, `total ${allRides.rides.length}`);
 
+  // --- inDrive features (2026-11-07): scheduled rides + tips ---
+  // Scheduled ride: 2 days ahead, stored + shown to driver + rider.
+  const schedTime = Date.now() + 2 * 86400000;
+  const schedRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: rider.user.id, pickup: "Chunian City", destination: "Kasur", vehicle: "car", proposed_fare: 3000, scheduled_for: schedTime }) });
+  check("scheduled ride created", !!schedRide.ride_id && schedRide.scheduled_for === schedTime, `ride #${schedRide.ride_id}`);
+  const schedDetail = await call(`/api/rides/${schedRide.ride_id}`);
+  check("scheduled ride stores its time", schedDetail.ride.scheduled_for === schedTime, `got ${schedDetail.ride.scheduled_for}`);
+  const schedReqs = await call(`/api/drivers/${driverId}/requests`);
+  check("driver sees scheduled ride with its time", schedReqs.requests.some((r) => r.id === schedRide.ride_id && r.scheduled_for === schedTime));
+  let schedPastBlocked = false;
+  try { await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: rider.user.id, pickup: "Chunian City", destination: "Kasur", vehicle: "car", proposed_fare: 3000, scheduled_for: Date.now() - 60000 }) }); } catch { schedPastBlocked = true; }
+  check("scheduled ride in the past is rejected", schedPastBlocked);
+  let schedFarBlocked = false;
+  try { await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: rider.user.id, pickup: "Chunian City", destination: "Kasur", vehicle: "car", proposed_fare: 3000, scheduled_for: Date.now() + 8 * 86400000 }) }); } catch { schedFarBlocked = true; }
+  check("scheduled ride more than 7 days ahead is rejected", schedFarBlocked);
+
+  // Tip: on the completed smoke ride (fare Rs 950, fee Rs 134 already charged).
+  let tipEarlyBlocked = false;
+  try { await call(`/api/rides/${schedRide.ride_id}/tip`, { method: "POST", body: JSON.stringify({ rider_id: rider.user.id, amount: 50 }) }); } catch { tipEarlyBlocked = true; }
+  check("tip on a non-completed ride is rejected", tipEarlyBlocked);
+  const tipRes = await call(`/api/rides/${ride.ride_id}/tip`, { method: "POST", body: JSON.stringify({ rider_id: rider.user.id, amount: 50 }) });
+  check("tip Rs 50 added, 0% commission on tip", tipRes.tip === 50 && tipRes.commission_on_tip === 0, JSON.stringify(tipRes));
+  const tippedRide = await call(`/api/rides/${ride.ride_id}`);
+  check("ride receipt shows tip Rs 50", tippedRide.ride.tip_amount === 50, `got ${tippedRide.ride.tip_amount}`);
+  const walletAfterTip = await call(`/api/drivers/${driverId}/wallet`);
+  check("tip is cash — prepaid wallet balance unchanged by tip", walletAfterTip.wallet_balance === balBefore - 134 + 500, `balance Rs ${walletAfterTip.wallet_balance}`);
+  let tipTwiceBlocked = false;
+  try { await call(`/api/rides/${ride.ride_id}/tip`, { method: "POST", body: JSON.stringify({ rider_id: rider.user.id, amount: 20 }) }); } catch { tipTwiceBlocked = true; }
+  check("second tip on the same ride is rejected", tipTwiceBlocked);
+  const earn2 = await call(`/api/drivers/${driverId}/earnings?days=1`);
+  check("earnings include tips Rs 50, driver kept +Rs 50", earn2.tips === 50 && earn2.driver_kept === 1658 + 50, JSON.stringify(earn2));
+  const hist2 = await call(`/api/rides?rider_id=${rider.user.id}`);
+  check("rider history shows the tip on the completed ride", hist2.rides.some((r) => r.id === ride.ride_id && r.tip_amount === 50));
+
   // Static pages.
   const page = await fetch(BASE + "/");
   check("homepage HTTP 200", page.status === 200);
   const pageText = await page.text();
   check("homepage mentions Version 1 testing + Uber/Careem exit note", pageText.includes("Version 1") && pageText.includes("30 Apr 2024"));
+  check("homepage has scheduled-ride inputs + tip box", pageText.includes("sched-date") && pageText.includes("sched-time") && pageText.includes("tip-box"));
+  const appJs = await (await fetch(BASE + "/app.js?v=3")).text();
+  check("served app.js has quick counter buttons + tip + scheduled logic", appJs.includes("setCounter") && appJs.includes("addTip") && appJs.includes("scheduled_for"));
+  const css = await (await fetch(BASE + "/style.css?v=4")).text();
+  check("served style.css has quick-btn + tip-box styles", css.includes(".quick-btn") && css.includes(".tip-box"));
 
   console.log(process.exitCode ? "\nSMOKE: FAILURES PRESENT" : "\nSMOKE: ALL CHECKS PASSED");
 }
