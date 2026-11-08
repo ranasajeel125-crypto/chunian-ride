@@ -283,7 +283,7 @@ async function showTrip(silent) {
       $$("#rate-stars button").forEach((b) => b.addEventListener("click", () => rateRide(Number(b.dataset.stars))));
       if (!r.tip_amount) { $("tip-box").classList.remove("hidden"); $("tip-out").textContent = ""; }
       else $("tip-box").classList.add("hidden");
-    } else $("tip-box").classList.add("hidden");
+    } else { $("tip-box").classList.add("hidden"); $("rate-box").classList.add("hidden"); }
     if (r.status === "requested") setTimeout(loadOffers, 8000);
     if (r.status === "accepted" || r.status === "ongoing") setTimeout(() => showTrip(), 8000);
   } catch (e) { if (!silent) toast(e.message, "error"); }

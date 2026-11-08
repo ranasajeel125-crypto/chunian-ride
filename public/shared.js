@@ -338,6 +338,7 @@ const ERR_MAP = {
   "scheduled time must be in the future": { en: "Scheduled time must be in the future.", ur: "طے شدہ وقت مستقبل میں ہونا چاہیے۔" },
   "you can only book up to 7 days ahead": { en: "You can only book up to 7 days ahead.", ur: "آپ صرف 7 دن آگے تک بک کر سکتے ہیں۔" },
   "tip can only be added after the ride is completed": { en: "Tip can only be added after the ride is completed.", ur: "ٹپ صرف رائیڈ مکمل ہونے کے بعد دی جا سکتی ہے۔" },
+  "rating can only be given after the ride is completed": { en: "Rating can only be given after the ride is completed.", ur: "ریٹنگ صرف رائیڈ مکمل ہونے کے بعد دی جا سکتی ہے۔" },
   "tip already added for this ride": { en: "Tip already added for this ride.", ur: "اس رائیڈ کے لیے ٹپ پہلے سے دی جا چکی ہے۔" },
   "tip cannot be more than Rs 5000": { en: "Tip cannot be more than Rs 5000.", ur: "ٹپ 5000 روپے سے زیادہ نہیں ہو سکتی۔" },
   "tip must be more than 0": { en: "Tip must be more than 0.", ur: "ٹپ 0 سے زیادہ ہونی چاہیے۔" },

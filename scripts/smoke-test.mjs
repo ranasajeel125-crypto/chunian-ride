@@ -186,6 +186,9 @@ async function main() {
   const driverId = offer.driver_id;
   check("offer driver is the logged-in demo driver", driverId === driverUser.id, `driverId=${driverId}`);
 
+  // Rating guard: a ride that has not finished cannot be rated.
+  await expectFail("rating a requested ride -> 400", () => call(`/api/rides/${ride.ride_id}/rate`, { method: "POST", body: JSON.stringify({ by: "rider", stars: 5 }), session: "rider" }), 400);
+
   // RBAC: another rider cannot read this ride; another driver cannot act as Usman.
   await expectFail("other rider cannot read this ride -> 403", () => call(`/api/rides/${ride.ride_id}`, { session: "riderB" }), 403);
   await expectFail("driver cannot counter-offer as another driver -> 403", () => call(`/api/rides/${ride.ride_id}/counter`, { method: "POST", body: JSON.stringify({ driver_id: 999001, fare: 950 }), session: "driver" }), 403);
@@ -220,7 +223,8 @@ async function main() {
   await expectFail("second completion of the same ride -> 400", () => call(`/api/rides/${ride.ride_id}/complete`, { method: "POST", body: JSON.stringify({ cash_received: true }), session: "driver" }), 400);
 
   // Rating + history + share + SOS.
-  await call(`/api/rides/${ride.ride_id}/rate`, { method: "POST", body: JSON.stringify({ by: "rider", stars: 5 }), session: "rider" });
+  const rated = await call(`/api/rides/${ride.ride_id}/rate`, { method: "POST", body: JSON.stringify({ by: "rider", stars: 5 }), session: "rider" });
+  check("rating a completed ride works", rated.rated === true && rated.stars === 5, JSON.stringify(rated));
   const hist = await call(`/api/rides?rider_id=${rider.id}`, { session: "rider" });
   check("ride history shows completed ride", hist.rides.some((r) => r.id === ride.ride_id && r.status === "completed"));
   const share = await call(`/api/rides/${ride.ride_id}/share`);
@@ -370,6 +374,10 @@ async function main() {
   let tipEarlyBlocked = false;
   try { await call(`/api/rides/${schedRide.ride_id}/tip`, { method: "POST", body: JSON.stringify({ rider_id: rider.id, amount: 50 }), session: "rider" }); } catch { tipEarlyBlocked = true; }
   check("tip on a non-completed ride is rejected", tipEarlyBlocked);
+  // Rating guard on a cancelled ride: cancel the scheduled ride, then rate it.
+  const cancelledSched = await call(`/api/rides/${schedRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "rider" });
+  check("scheduled ride cancelled for the rating-guard test", cancelledSched.status === "cancelled");
+  await expectFail("rating a cancelled ride -> 400", () => call(`/api/rides/${schedRide.ride_id}/rate`, { method: "POST", body: JSON.stringify({ by: "rider", stars: 5 }), session: "rider" }), 400);
   const tipRes = await call(`/api/rides/${ride.ride_id}/tip`, { method: "POST", body: JSON.stringify({ rider_id: rider.id, amount: 50 }), session: "rider" });
   check("tip Rs 50 added, 0% commission on tip", tipRes.tip === 50 && tipRes.commission_on_tip === 0, JSON.stringify(tipRes));
   const tippedRide = await call(`/api/rides/${ride.ride_id}`, { session: "rider" });

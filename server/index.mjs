@@ -806,6 +806,10 @@ app.post("/api/rides/:id/rate", requireAuth, async (req, res) => {
   const s = Math.max(1, Math.min(5, num(stars, 5)));
   const ride = await loadRideOr404(req, res);
   if (!ride) return;
+  // Ratings only count for finished trips — a rating on a requested,
+  // accepted, ongoing or cancelled ride would be meaningless (and could be
+  // abused to tank a driver's rating before the trip even happens).
+  if (ride.status !== "completed") return res.status(400).json({ error: "rating can only be given after the ride is completed" });
   if (by === "rider" && ride.driver_id) {
     if (req.auth.ownerType !== "user" || ride.rider_id !== req.auth.ownerId) {
       return res.status(403).json({ error: "Sirf is ride ka rider driver ko rate kar sakta hai" });
