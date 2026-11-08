@@ -316,7 +316,11 @@ export function distanceBetween(fromName, toName) {
 export async function getSettings() {
   const res = await client.execute("SELECT key, value FROM settings");
   const out = { ...DEFAULT_SETTINGS };
-  for (const row of res.rows) out[row.key] = row.value;
+  for (const row of res.rows) {
+    // NEVER leak the admin setup-token hash: /api/settings is public.
+    if (row.key === "admin_setup_token_hash") continue;
+    out[row.key] = row.value;
+  }
   return out;
 }
 
