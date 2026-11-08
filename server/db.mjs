@@ -44,9 +44,11 @@ export const DEFAULT_SETTINGS = {
   rate_bike_per_km: "15",
   rate_rickshaw_per_km: "25",
   rate_car_per_km: "70",
+  rate_ac_car_per_km: "85",
   min_bike: "50",
   min_rickshaw: "100",
   min_car: "150",
+  min_ac_car: "200",
   commission_pct: "12",
   booking_fee: "20",
   jazzcash_number: "03266040350",
@@ -484,6 +486,7 @@ export async function initDb() {
       { name: "Bilal Hussain", phone: "0301-0000002", vehicle: "rickshaw", model: "Tez Raftar Rickshaw", plate: "DEMO-RIK-01", wallet: 2000 },
       { name: "Usman Ghani", phone: "0301-0000003", vehicle: "car", model: "Toyota Corolla", plate: "DEMO-CAR-01", wallet: 2000 },
       { name: "Hassan Ali", phone: "0301-0000004", vehicle: "car", model: "Suzuki Alto", plate: "DEMO-CAR-02", wallet: 2000 },
+      { name: "Ali Raza", phone: "03010000005", vehicle: "ac_car", model: "Toyota Corolla GLi", plate: "DEMO-ACC-01", wallet: 2000 },
     ];
     const driverUserIds = {};
     // Demo drivers start with NO rating (rating 0, count 0) — stars only ever

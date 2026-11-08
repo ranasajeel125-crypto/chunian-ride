@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Chunian Ride logo mark: green rounded square + white CAR pictogram.
+"""Chunian Ride logo mark: blue rounded square + white CAR pictogram.
 User order 2026-11-06: the logo must show a vehicle (car), not just the
-rickshaw mark. Same green brand colour (#0b6e2f).
+rickshaw mark. Redesign 2026-11-08: blue brand colour (#0b5ed7) per
+docs/redesign-plan.md §7 (was green #0b6e2f).
 Outputs: public/logo.png (512), public/favicon.png (64), and Android
 mipmap launcher icons (mdpi 48, hdpi 72, xhdpi 96, xxhdpi 144, xxxhdpi 192).
 Pictogram only (no text) so it reads at favicon / app-icon size.
 """
 from PIL import Image, ImageDraw
 
-GREEN = (11, 110, 47, 255)      # #0b6e2f — app header green
+GREEN = (11, 94, 215, 255)      # #0b5ed7 — app brand blue (redesign §7)
+BLUE = GREEN
 WHITE = (255, 255, 255, 255)
 
 def draw_mark(size):

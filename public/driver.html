@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a2540">
+<title>Chunian Ride — Driver | Drive &amp; earn</title>
+<meta name="description" content="Chunian Ride driver app — go online, take ride requests, earn. Cash payment, prepaid wallet top-up.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css?v=5">
+<link rel="icon" type="image/png" href="/favicon.png">
+</head>
+<body>
+<header class="site">
+  <div class="header-inner">
+    <a class="brand" href="/">
+      <img src="/logo.png" alt="Chunian Ride logo" class="logo-img">
+      <div class="brand-text">
+        <div class="brand-name">Chunian Ride</div>
+        <div class="brand-sub" data-i18n="driver_home">Driver dashboard</div>
+      </div>
+    </a>
+    <div class="header-actions">
+      <button class="lang-toggle" type="button" aria-label="Switch language">اردو</button>
+      <div class="emergency">
+        <a href="tel:15">🚨 Police 15</a>
+        <a href="tel:1122">⛑️ 1122</a>
+      </div>
+    </div>
+  </div>
+  <nav class="top-pills" aria-label="Driver sections">
+    <button class="nav-btn active" data-screen="home">🏠 <span data-i18n="nav_home">Home</span></button>
+    <button class="nav-btn" data-screen="requests">📩 <span data-i18n="nav_requests">Requests</span></button>
+    <button class="nav-btn" data-screen="wallet">👛 <span data-i18n="nav_wallet">Wallet</span></button>
+    <button class="nav-btn" data-screen="profile">👤 <span data-i18n="nav_profile">Profile</span></button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============ HOME ============ -->
+  <section id="screen-home" class="screen active">
+    <div class="card" id="driver-auth">
+      <p class="eyebrow">Driver</p>
+      <h2 data-i18n="login_title">Login</h2>
+      <p class="card-sub" data-i18n="driver_login_sub">Login with your driver phone + password.</p>
+      <input id="driver-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03001234567" inputmode="tel" autocomplete="tel">
+      <input id="driver-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)" autocomplete="current-password">
+      <p class="form-err" id="auth-err" role="alert"></p>
+      <button class="primary" id="btn-driver-login" data-i18n="btn_login">Login</button>
+      <p class="muted" id="driver-who"></p>
+    </div>
+
+    <div id="driver-dash" class="hidden">
+      <div class="card">
+        <p class="eyebrow">Driver</p>
+        <h2 data-i18n="status_card">Your status</h2>
+        <div id="driver-info"></div>
+        <p class="muted" id="loc-status"></p>
+        <button id="online-btn" class="primary" data-i18n="go_online">Go Online</button>
+      </div>
+
+      <div class="card">
+        <p class="eyebrow">Driver</p>
+        <h2 data-i18n="earnings">Earnings</h2>
+        <div class="row">
+          <button id="btn-earn-today" data-i18n="today">Today</button>
+          <button id="btn-earn-week" data-i18n="days_7">7 days</button>
+        </div>
+        <div id="earnings-info"></div>
+      </div>
+
+      <div class="card">
+        <p class="eyebrow">Driver</p>
+        <h2 data-i18n="my_rides">My rides</h2>
+        <button id="btn-driver-rides" data-i18n="btn_history">Show history</button>
+        <div id="driver-chat-card" class="hidden">
+          <h3 data-i18n="chat_title_driver">Chat with rider</h3>
+          <p class="muted" id="driver-chat-who"></p>
+          <div id="driver-chat-list" class="chat-list"></div>
+          <div class="chat-input-row">
+            <input id="driver-chat-input" data-i18n-ph="chat_ph" placeholder="Write a message…" maxlength="500">
+            <button id="btn-driver-chat-send" data-i18n="btn_send">Send</button>
+          </div>
+        </div>
+        <div id="driver-rides"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ REQUESTS ============ -->
+  <section id="screen-requests" class="screen">
+    <div class="card">
+      <p class="eyebrow">Driver</p>
+      <h2 data-i18n="requests_title">Ride requests</h2>
+      <button id="btn-requests" data-i18n="requests_title">Ride requests</button>
+      <div id="requests-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ WALLET ============ -->
+  <section id="screen-wallet" class="screen">
+    <div class="card">
+      <p class="eyebrow">Driver</p>
+      <h2 data-i18n="wallet_title">Wallet</h2>
+      <div id="wallet-info"></div>
+    </div>
+    <div class="card">
+      <p class="eyebrow">Driver</p>
+      <h2 data-i18n="topup_title">Top-up — prepaid wallet</h2>
+      <input id="topup-amount" type="number" min="500" data-i18n-ph="topup_amount_ph" placeholder="Top-up amount (Rs) — minimum Rs 500">
+      <input id="topup-tid" data-i18n-ph="topup_tid_ph" placeholder="JazzCash TID (transaction ID)">
+      <p class="form-err" id="topup-err" role="alert"></p>
+      <button id="btn-topup">Send top-up request</button>
+      <p class="muted" id="topup-note"></p>
+      <div id="topup-requests"></div>
+    </div>
+  </section>
+
+  <!-- ============ PROFILE ============ -->
+  <section id="screen-profile" class="screen">
+    <div class="card">
+      <p class="eyebrow">Driver</p>
+      <h2 data-i18n="driver_details">Driver &amp; vehicle details</h2>
+      <div id="driver-profile-info"></div>
+      <h3 data-i18n="language">Language</h3>
+      <button class="lang-toggle" type="button">اردو</button>
+      <h3 data-i18n="change_pw">Change password</h3>
+      <input id="pw-current" type="password" data-i18n-ph="current_pw_ph" placeholder="Current password" autocomplete="current-password">
+      <input id="pw-new" type="password" data-i18n-ph="new_pw_ph" placeholder="New password (at least 6 characters)" autocomplete="new-password">
+      <p class="form-err" id="pw-err" role="alert"></p>
+      <button id="btn-change-pw" data-i18n="btn_change_pw">Change password</button>
+      <div class="row" style="margin-top:12px">
+        <button id="btn-logout" data-i18n="btn_logout">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow" data-i18n="new_driver">New driver</p>
+      <h2 data-i18n="register_title">Driver registration — new driver</h2>
+      <p class="card-sub" data-i18n="register_sub">CNIC, driving licence and vehicle registration are required. The owner will approve.</p>
+      <input id="reg-name" data-i18n-ph="name_ph" placeholder="Your name">
+      <input id="reg-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03001234567" inputmode="tel">
+      <input id="reg-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)">
+      <select id="reg-vehicle">
+        <option value="bike" data-i18n="bike">Bike</option>
+        <option value="rickshaw" data-i18n="rickshaw">Rickshaw</option>
+        <option value="car" data-i18n="car">Car</option>
+        <option value="ac_car" data-i18n="ac_car">AC Car</option>
+      </select>
+      <input id="reg-model" data-i18n-ph="model_ph" placeholder="Vehicle model — e.g. Honda CD 70">
+      <input id="reg-plate" data-i18n-ph="plate_ph" placeholder="Number plate">
+      <input id="reg-cnic" data-i18n-ph="cnic_ph" placeholder="CNIC — e.g. 35202-1234567-1">
+      <input id="reg-licence" data-i18n-ph="licence_ph" placeholder="Driving licence number">
+      <input id="reg-vehreg" data-i18n-ph="vehreg_ph" placeholder="Vehicle registration number">
+      <p class="form-err" id="reg-err" role="alert"></p>
+      <button class="primary" id="btn-register" data-i18n="btn_register">Register</button>
+      <p class="muted" id="reg-out"></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p data-i18n="footer_about">Chunian Ride — inDrive-style ride booking for Chunian, Tehsil Chunian, District Kasur. Bike, rickshaw, car and AC car. Cash payment, negotiated fares.</p>
+  <p data-i18n="emergency">Emergency: Police 15 • Rescue 1122</p>
+</footer>
+
+<nav class="bottom-nav" aria-label="Driver sections">
+  <button class="nav-btn active" data-screen="home">🏠<span data-i18n="nav_home">Home</span></button>
+  <button class="nav-btn" data-screen="requests">📩<span data-i18n="nav_requests">Requests</span></button>
+  <button class="nav-btn" data-screen="wallet">👛<span data-i18n="nav_wallet">Wallet</span></button>
+  <button class="nav-btn" data-screen="profile">👤<span data-i18n="nav_profile">Profile</span></button>
+</nav>
+
+<script src="/shared.js?v=5"></script>
+<script src="/driver.js?v=5"></script>
+<script>
+  $("btn-driver-login").addEventListener("click", (e) => driverLogin(e.currentTarget));
+  $("online-btn").addEventListener("click", (e) => toggleOnline(e.currentTarget));
+  $("btn-earn-today").addEventListener("click", () => loadEarnings(1));
+  $("btn-earn-week").addEventListener("click", () => loadEarnings(7));
+  $("btn-driver-rides").addEventListener("click", loadDriverRides);
+  $("btn-requests").addEventListener("click", loadRequests);
+  $("btn-driver-chat-send").addEventListener("click", (e) => sendDriverChat(e.currentTarget));
+  $("btn-topup").addEventListener("click", (e) => topup(e.currentTarget));
+  $("btn-change-pw").addEventListener("click", (e) => changePassword($("pw-current"), $("pw-new"), $("pw-err"), e.currentTarget));
+  $("btn-logout").addEventListener("click", logoutUser);
+  $("btn-register").addEventListener("click", (e) => registerDriver(e.currentTarget));
+</script>
+</body>
+</html>

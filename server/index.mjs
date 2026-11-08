@@ -66,7 +66,7 @@ app.use(express.static(path.join(root, "public")));
 app.use(attachAuth);
 
 const now = () => Date.now();
-const VEHICLES = ["bike", "rickshaw", "car"];
+const VEHICLES = ["bike", "rickshaw", "car", "ac_car"];
 
 function num(v, d = 0) {
   const n = Number(v);
@@ -116,7 +116,7 @@ app.get("/api/settings", async (req, res) => {
 // ---- Fare estimate (public — needed before login) ----
 app.post("/api/fare", async (req, res) => {
   const { pickup, destination, vehicle, distance_km } = req.body || {};
-  if (!VEHICLES.includes(vehicle)) return res.status(400).json({ error: "vehicle must be bike, rickshaw or car" });
+  if (!VEHICLES.includes(vehicle)) return res.status(400).json({ error: "vehicle must be bike, rickshaw, car or ac_car" });
   let km = num(distance_km, 0);
   let estimated = false;
   if (!km) {
@@ -409,6 +409,17 @@ app.get("/api/drivers/:id/wallet", requireAuth, requireSelfOrAdmin((req) => req.
     args: [num(req.params.id)],
   });
   res.json({ wallet_balance: await getWalletBalance(num(req.params.id)), transactions: tx.rows, pending_topups: pending.rows, past_topups: past.rows });
+});
+
+// ---- Wallet (self): balance + recent transactions for the logged-in user ----
+// User sessions only — admin sessions get 403 (admins use /api/admin/wallet/:driverId).
+app.get("/api/wallet/me", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user") return res.status(403).json({ error: "Sirf user account ka wallet yahan dikhta hai" });
+  const tx = await client.execute({
+    sql: "SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+    args: [req.auth.ownerId],
+  });
+  res.json({ balance: await getWalletBalance(req.auth.ownerId), transactions: tx.rows });
 });
 
 app.get("/api/drivers/:id/earnings", requireAuth, requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
@@ -833,6 +844,78 @@ app.get("/api/admin/wallet/:driverId", requireAdmin, async (req, res) => {
   res.json({ wallet_balance: await getWalletBalance(num(req.params.driverId)), transactions: tx.rows });
 });
 
+// ---- Admin overview (dashboard stat cards) ----
+// "today" = last 24h (completed_at for completed rides, created_at for rides).
+// Platform revenue = SUM(commission_charged) on completed rides.
+app.get("/api/admin/overview", requireAdmin, async (req, res) => {
+  const dayAgo = now() - 86400000;
+  const weekAgo = now() - 7 * 86400000;
+  const one = async (sql, args = []) => Number((await client.execute({ sql, args })).rows[0].n);
+  const users = await one("SELECT COUNT(*) AS n FROM users");
+  const riders = await one("SELECT COUNT(*) AS n FROM users WHERE role = 'rider'");
+  const drivers = await one("SELECT COUNT(*) AS n FROM drivers");
+  const driversOnline = await one("SELECT COUNT(*) AS n FROM drivers WHERE online = 1 AND status = 'approved'");
+  const ridesToday = await one("SELECT COUNT(*) AS n FROM rides WHERE created_at >= ?", [dayAgo]);
+  const ridesTotal = await one("SELECT COUNT(*) AS n FROM rides");
+  const completedToday = await one("SELECT COUNT(*) AS n FROM rides WHERE status = 'completed' AND completed_at >= ?", [dayAgo]);
+  const pendingTopups = await one("SELECT COUNT(*) AS n FROM topup_requests WHERE status = 'pending'");
+  const openComplaints = await one("SELECT COUNT(*) AS n FROM complaints WHERE status = 'open'");
+  const pendingDrivers = await one("SELECT COUNT(*) AS n FROM drivers WHERE status = 'pending'");
+  const rev7d = await one("SELECT COALESCE(SUM(commission_charged), 0) AS n FROM rides WHERE status = 'completed' AND completed_at >= ?", [weekAgo]);
+  const revToday = await one("SELECT COALESCE(SUM(commission_charged), 0) AS n FROM rides WHERE status = 'completed' AND completed_at >= ?", [dayAgo]);
+  res.json({
+    totals: { users, riders, drivers, drivers_online: driversOnline, rides_today: ridesToday, rides_total: ridesTotal, completed_today: completedToday },
+    pending_topups: pendingTopups,
+    open_complaints: openComplaints,
+    pending_drivers: pendingDrivers,
+    platform_revenue_7d: rev7d,
+    platform_revenue_today: revToday,
+  });
+});
+
+// ---- Admin cities (service areas; the rider app reads them via /api/places) ----
+app.get("/api/admin/cities", requireAdmin, async (req, res) => {
+  const rows = await client.execute({ sql: "SELECT * FROM cities ORDER BY id ASC" });
+  res.json({ cities: rows.rows });
+});
+
+app.post("/api/admin/cities", requireAdmin, async (req, res) => {
+  const { name, lat, lng, km_from_chunian, note } = req.body || {};
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return res.status(400).json({ error: "name is required" });
+  const la = Number(lat), ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return res.status(400).json({ error: "valid lat/lng are required" });
+  const km = km_from_chunian == null || km_from_chunian === "" ? null : Number(km_from_chunian);
+  if (km != null && !Number.isFinite(km)) return res.status(400).json({ error: "km_from_chunian must be a number" });
+  try {
+    const r = await client.execute({
+      sql: "INSERT INTO cities(name, lat, lng, km_from_chunian, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [cleanName, la, ln, km, String(note || ""), now()],
+    });
+    const city = (await client.execute({ sql: "SELECT * FROM cities WHERE id = ?", args: [Number(r.lastInsertRowid)] })).rows[0];
+    await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "city_create", targetType: "city", targetId: Number(r.lastInsertRowid), detail: `City added: ${cleanName}` });
+    res.json({ city });
+  } catch {
+    res.status(409).json({ error: "Is naam ka sheher pehle se hai" });
+  }
+});
+
+app.post("/api/admin/cities/:id/deactivate", requireAdmin, async (req, res) => {
+  const c = await client.execute({ sql: "SELECT * FROM cities WHERE id = ?", args: [num(req.params.id)] });
+  if (!c.rows.length) return res.status(404).json({ error: "city not found" });
+  await client.execute({ sql: "UPDATE cities SET active = 0 WHERE id = ?", args: [num(req.params.id)] });
+  await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "city_deactivate", targetType: "city", targetId: num(req.params.id), detail: `City deactivated: ${c.rows[0].name}` });
+  res.json({ active: 0 });
+});
+
+app.post("/api/admin/cities/:id/activate", requireAdmin, async (req, res) => {
+  const c = await client.execute({ sql: "SELECT * FROM cities WHERE id = ?", args: [num(req.params.id)] });
+  if (!c.rows.length) return res.status(404).json({ error: "city not found" });
+  await client.execute({ sql: "UPDATE cities SET active = 1 WHERE id = ?", args: [num(req.params.id)] });
+  await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "city_activate", targetType: "city", targetId: num(req.params.id), detail: `City activated: ${c.rows[0].name}` });
+  res.json({ active: 1 });
+});
+
 // ---- Admin foundation: users, top-ups, promo codes, audit log ----
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   const rows = await client.execute({
@@ -934,7 +1017,7 @@ app.post("/api/admin/demo/disable", requireAdmin, async (req, res) => {
 
 // Fare + commission settings — take effect immediately for new fare estimates.
 app.post("/api/admin/settings", requireAdmin, async (req, res) => {
-  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "min_bike", "min_rickshaw", "min_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup"];
+  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup"];
   const changed = [];
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
@@ -1006,6 +1089,11 @@ app.get("/api/admin/profit", requireAdmin, async (req, res) => {
 });
 
 app.get("/", (req, res) => res.sendFile(path.join(root, "public", "index.html")));
+
+// Separate role pages (frontend agent builds admin.html / rider.html / driver.html).
+app.get("/admin", (req, res) => res.sendFile(path.join(root, "public", "admin.html")));
+app.get("/rider", (req, res) => res.sendFile(path.join(root, "public", "rider.html")));
+app.get("/driver", (req, res) => res.sendFile(path.join(root, "public", "driver.html")));
 
 // JSON error handler — never leak a stack trace or an HTML error page to the app.
 app.use((err, req, res, next) => {

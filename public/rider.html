@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a2540">
+<title>Chunian Ride — Rider | Bike • Rickshaw • Car • AC Car</title>
+<meta name="description" content="Chunian Ride rider app — book a bike, rickshaw, car or AC car in Chunian. Cash payment, negotiated fares.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css?v=5">
+<link rel="icon" type="image/png" href="/favicon.png">
+</head>
+<body>
+<header class="site">
+  <div class="header-inner">
+    <a class="brand" href="/">
+      <img src="/logo.png" alt="Chunian Ride logo" class="logo-img">
+      <div class="brand-text">
+        <div class="brand-name">Chunian Ride</div>
+        <div class="brand-sub">Chunian • Pattoki • Kasur • Lahore</div>
+      </div>
+    </a>
+    <div class="header-actions">
+      <button class="lang-toggle" type="button" aria-label="Switch language">اردو</button>
+      <div class="emergency">
+        <a href="tel:15">🚨 Police 15</a>
+        <a href="tel:1122">⛑️ 1122</a>
+      </div>
+    </div>
+  </div>
+  <nav class="top-pills" aria-label="Rider sections">
+    <button class="nav-btn active" data-screen="home">🏠 <span data-i18n="nav_home">Home</span></button>
+    <button class="nav-btn" data-screen="rides">🧾 <span data-i18n="nav_rides">Rides</span></button>
+    <button class="nav-btn" data-screen="wallet">👛 <span data-i18n="nav_wallet">Wallet</span></button>
+    <button class="nav-btn" data-screen="profile">👤 <span data-i18n="nav_profile">Profile</span></button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============ HOME ============ -->
+  <section id="screen-home" class="screen active">
+    <div class="hero">
+      <h1 data-i18n="hero_title">Chunian's own ride service</h1>
+      <p data-i18n="hero_sub">Bike • Rickshaw • Car • AC Car — negotiated fare, cash payment, low commission.</p>
+      <div class="chips">
+        <span class="chip">Chunian → Pattoki 14 km</span>
+        <span class="chip">Chunian → Kasur 48 km</span>
+        <span class="chip">Chunian → Lahore ~89 km</span>
+      </div>
+    </div>
+
+    <div class="map-card">
+      <div id="map"></div>
+      <p class="map-hint" data-i18n="map_hint">Tap the map — pickup first, then destination.</p>
+    </div>
+
+    <div class="card" id="rider-auth">
+      <p class="eyebrow">Rider</p>
+      <h2 data-i18n="signup_title">Login / Signup</h2>
+      <p class="card-sub" data-i18n="rider_login_sub">Login with phone + password. First time? Enter your name + phone + password — your account will be created.</p>
+      <input id="rider-name" data-i18n-ph="name_ph" placeholder="Your name" autocomplete="name">
+      <input id="rider-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03001234567" inputmode="tel" autocomplete="tel">
+      <input id="rider-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)" autocomplete="current-password">
+      <p class="form-err" id="auth-err" role="alert"></p>
+      <div class="row">
+        <button class="primary" id="btn-rider-signup" data-i18n="btn_signup">Sign up</button>
+        <button id="btn-rider-login" data-i18n="btn_login">Login</button>
+      </div>
+      <p class="muted" id="rider-who"></p>
+    </div>
+
+    <div class="card hidden" id="booking-card">
+      <p class="eyebrow">Rider</p>
+      <h2 data-i18n="where_to_go">Where to go?</h2>
+      <button class="secondary" id="btn-gps" data-i18n="use_my_location">📍 Use my location</button>
+      <p class="form-err" id="gps-err" role="alert"></p>
+      <label for="pickup" data-i18n="pickup_label">Pickup — where from?</label>
+      <select id="pickup"></select>
+      <label for="destination" data-i18n="dest_label">Destination — where to?</label>
+      <select id="destination"></select>
+      <div id="recent-wrap">
+        <label data-i18n="recent_dest">Recent destinations</label>
+        <div id="recent-box" class="chips"></div>
+      </div>
+      <label data-i18n="vehicle_label">Choose your ride</label>
+      <div class="veh veh4" id="veh-row"></div>
+      <div id="fare-box" class="fare-box hidden"></div>
+      <p class="form-err" id="fare-err" role="alert"></p>
+      <label for="proposed-fare" data-i18n="offer_label">Offer your fare (Rs)</label>
+      <input id="proposed-fare" type="number" min="1">
+      <p class="muted" data-i18n="offer_hint">The driver can accept or counter-offer. The suggested fare is filled in for you.</p>
+      <details class="sched-details">
+        <summary data-i18n="book_later">🕐 Book for later (optional)</summary>
+        <div class="row3">
+          <input id="sched-date" type="date">
+          <input id="sched-time" type="time">
+        </div>
+        <p class="muted" data-i18n="book_later_hint">Leave empty for a ride now. Choose a date + time to schedule up to 7 days ahead.</p>
+      </details>
+      <p class="form-err" id="book-err" role="alert"></p>
+      <button class="primary" id="btn-find-driver" data-i18n="find_driver">Find a driver</button>
+    </div>
+
+    <div class="card hidden" id="offers-card">
+      <p class="eyebrow">Rider</p>
+      <h2 data-i18n="driver_offers">Driver offers</h2>
+      <div id="offers-list"></div>
+      <p class="muted" data-i18n="offers_hint">Choose an offer — compare fare, driver, vehicle, rating and ETA.</p>
+    </div>
+
+    <div class="card hidden" id="trip-card">
+      <p class="eyebrow">Rider</p>
+      <h2 data-i18n="live_trip">Your ride</h2>
+      <div id="trip-info"></div>
+      <div class="row">
+        <button id="btn-share" data-i18n="share_trip">🔗 Share trip</button>
+        <button class="danger" id="btn-sos" data-i18n="sos">🆘 SOS</button>
+        <button id="btn-cancel" data-i18n="cancel">Cancel</button>
+      </div>
+      <p class="muted" id="share-out"></p>
+      <div id="chat-box" class="chat-box hidden">
+        <h3 data-i18n="chat_title">Chat with driver</h3>
+        <p class="muted" data-i18n="chat_note">Only for this ride — phone numbers are not shared.</p>
+        <div id="chat-list" class="chat-list"></div>
+        <div class="chat-input-row">
+          <input id="chat-input" data-i18n-ph="chat_ph" placeholder="Write a message…" maxlength="500">
+          <button id="btn-chat-send" data-i18n="btn_send">Send</button>
+        </div>
+      </div>
+      <div id="rate-box" class="hidden">
+        <h3 data-i18n="rate_driver">Rate the driver</h3>
+        <div class="stars" id="rate-stars"></div>
+      </div>
+      <div id="tip-box" class="tip-box hidden">
+        <h3 data-i18n="tip_title">💰 Give a tip — thank your driver</h3>
+        <p class="muted" data-i18n="tip_note">The tip goes 100% to the driver — no commission is charged on it.</p>
+        <div class="tip-btns">
+          <button data-tip="20">Rs 20</button>
+          <button data-tip="50">Rs 50</button>
+          <button data-tip="100">Rs 100</button>
+        </div>
+        <div class="chat-input-row">
+          <input id="tip-custom" type="number" min="1" max="5000" data-i18n-ph="tip_custom_ph" placeholder="Your own tip amount (Rs)">
+          <button id="btn-tip-custom" data-i18n="btn_tip">Give tip</button>
+        </div>
+        <p class="muted" id="tip-out"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RIDES ============ -->
+  <section id="screen-rides" class="screen">
+    <div class="card">
+      <p class="eyebrow">Rider</p>
+      <h2 data-i18n="history_title">My rides — history &amp; receipts</h2>
+      <button id="btn-history" data-i18n="btn_history">Show history</button>
+      <div id="history-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ WALLET ============ -->
+  <section id="screen-wallet" class="screen">
+    <div class="card">
+      <p class="eyebrow">Rider</p>
+      <h2 data-i18n="wallet_title">Wallet</h2>
+      <div id="rider-wallet"><p class="muted" data-i18n="loading">Loading…</p></div>
+    </div>
+  </section>
+
+  <!-- ============ PROFILE ============ -->
+  <section id="screen-profile" class="screen">
+    <div class="card">
+      <p class="eyebrow">Rider</p>
+      <h2 data-i18n="profile_title">Profile</h2>
+      <div id="profile-info"></div>
+      <h3 data-i18n="language">Language</h3>
+      <button class="lang-toggle" type="button">اردو</button>
+      <h3 data-i18n="change_pw">Change password</h3>
+      <input id="pw-current" type="password" data-i18n-ph="current_pw_ph" placeholder="Current password" autocomplete="current-password">
+      <input id="pw-new" type="password" data-i18n-ph="new_pw_ph" placeholder="New password (at least 6 characters)" autocomplete="new-password">
+      <p class="form-err" id="pw-err" role="alert"></p>
+      <button id="btn-change-pw" data-i18n="btn_change_pw">Change password</button>
+      <div class="row" style="margin-top:12px">
+        <button id="btn-logout" data-i18n="btn_logout">Logout</button>
+      </div>
+    </div>
+    <div class="card sos-card">
+      <p class="eyebrow" data-i18n="support">Support</p>
+      <div id="support-info"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p data-i18n="footer_about">Chunian Ride — inDrive-style ride booking for Chunian, Tehsil Chunian, District Kasur. Bike, rickshaw, car and AC car. Cash payment, negotiated fares.</p>
+  <p data-i18n="emergency">Emergency: Police 15 • Rescue 1122</p>
+</footer>
+
+<nav class="bottom-nav" aria-label="Rider sections">
+  <button class="nav-btn active" data-screen="home">🏠<span data-i18n="nav_home">Home</span></button>
+  <button class="nav-btn" data-screen="rides">🧾<span data-i18n="nav_rides">Rides</span></button>
+  <button class="nav-btn" data-screen="wallet">👛<span data-i18n="nav_wallet">Wallet</span></button>
+  <button class="nav-btn" data-screen="profile">👤<span data-i18n="nav_profile">Profile</span></button>
+</nav>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/shared.js?v=5"></script>
+<script src="/rider.js?v=5"></script>
+<script>
+  $("btn-rider-signup").addEventListener("click", (e) => riderSignup(e.currentTarget));
+  $("btn-rider-login").addEventListener("click", (e) => riderLogin(e.currentTarget));
+  $("btn-gps").addEventListener("click", () => requestGpsPickup(false));
+  $("btn-find-driver").addEventListener("click", (e) => requestRide(e.currentTarget));
+  $("btn-share").addEventListener("click", (e) => shareTrip(e.currentTarget));
+  $("btn-sos").addEventListener("click", (e) => sosTrip(e.currentTarget));
+  $("btn-cancel").addEventListener("click", (e) => cancelRide(e.currentTarget));
+  $("btn-chat-send").addEventListener("click", (e) => sendChat(e.currentTarget));
+  $("btn-history").addEventListener("click", loadHistory);
+  $("btn-change-pw").addEventListener("click", (e) => changePassword($("pw-current"), $("pw-new"), $("pw-err"), e.currentTarget));
+  $("btn-logout").addEventListener("click", logoutUser);
+  $$("[data-tip]").forEach((b) => b.addEventListener("click", (e) => addTip(Number(b.dataset.tip), e.currentTarget)));
+  $("btn-tip-custom").addEventListener("click", (e) => addTip(Number($("tip-custom").value), e.currentTarget));
+</script>
+</body>
+</html>

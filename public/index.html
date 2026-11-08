@@ -3,16 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0b6e2f">
-<title>Chunian Ride — Chunian, Kasur | Bike • Rickshaw • Car</title>
-<meta name="description" content="Chunian Ride — inDrive-style ride booking for Chunian, Tehsil Chunian, District Kasur. Bike, rickshaw and car. Cash payment, negotiated fares.">
+<meta name="theme-color" content="#0a2540">
+<title>Chunian Ride — Chunian, Kasur | Bike • Rickshaw • Car • AC Car</title>
+<meta name="description" content="Chunian Ride — inDrive-style ride booking for Chunian, Tehsil Chunian, District Kasur. Bike, rickshaw, car and AC car. Cash payment, negotiated fares.">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap">
-<link rel="stylesheet" href="/style.css?v=4">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css?v=5">
 <link rel="icon" type="image/png" href="/favicon.png">
 </head>
-<body>
+<body class="landing">
 <header class="site">
   <div class="header-inner">
     <div class="brand">
@@ -23,7 +23,7 @@
       </div>
     </div>
     <div class="header-actions">
-      <button class="account-btn" onclick="showWelcome()" title="Account badlein">👤</button>
+      <button class="lang-toggle" type="button" aria-label="Switch language">اردو</button>
       <div class="emergency">
         <a href="tel:15">🚨 Police 15</a>
         <a href="tel:1122">⛑️ 1122</a>
@@ -32,10 +32,10 @@
   </div>
 </header>
 
-<main>
+<main class="landing-main">
   <div class="hero">
-    <h1>Chunian ki apni ride service</h1>
-    <p>Bike • Rickshaw • Car — negotiated fare, cash payment, low commission.</p>
+    <h1 data-i18n="hero_title">Chunian's own ride service</h1>
+    <p data-i18n="hero_sub">Bike • Rickshaw • Car • AC Car — negotiated fare, cash payment, low commission.</p>
     <div class="chips">
       <span class="chip">Chunian → Pattoki 14 km</span>
       <span class="chip">Chunian → Kasur 48 km</span>
@@ -43,339 +43,37 @@
     </div>
   </div>
 
-  <div class="map-card">
-    <div id="map"></div>
-    <p class="map-hint">Map par tap karein — pehle pickup, phir destination. / Tap the map: pickup first, then destination.</p>
+  <div class="role-cards">
+    <a class="role-card" href="/rider">
+      <span class="role-ico">🚖</span>
+      <span class="role-text"><b data-i18n="hero_cta_rider">Book a ride</b><small data-i18n="hero_cta_rider_sub">Rider — book Bike, Rickshaw, Car or AC Car</small></span>
+      <span class="role-arrow">›</span>
+    </a>
+    <a class="role-card" href="/driver">
+      <span class="role-ico">🧑‍✈️</span>
+      <span class="role-text"><b data-i18n="hero_cta_driver">Drive &amp; earn</b><small data-i18n="hero_cta_driver_sub">Driver — take rides and earn</small></span>
+      <span class="role-arrow">›</span>
+    </a>
   </div>
 
-  <!-- ============ RIDER ============ -->
-  <section id="tab-rider" class="tab active">
-    <div class="card" id="rider-auth">
-      <p class="eyebrow">Rider</p>
-      <h2>Rider Login / Signup</h2>
-      <p class="card-sub">Phone + password se login karein. Pehli dafa naam + phone + password dein — signup ho jaye ga.</p>
-      <input id="rider-name" placeholder="Apna naam / Your name">
-      <input id="rider-phone" placeholder="Phone — misal: 03001234567" inputmode="tel">
-      <input id="rider-password" type="password" placeholder="Password (kam az kam 6 harf)">
-      <div class="row">
-        <button class="primary" onclick="riderSignup()">Signup</button>
-        <button onclick="riderLogin()">Login</button>
-        <button onclick="logoutUser()">Logout</button>
-      </div>
-      <p class="muted" id="rider-who"></p>
-    </div>
+  <p class="owner-link"><a href="/admin" data-i18n="owner_admin">Owner / Admin</a></p>
 
-    <div class="card">
-      <p class="eyebrow">Book a ride</p>
-      <h2>Sawari book karein</h2>
-      <label>Pickup — Kahan se?</label>
-      <select id="pickup"></select>
-      <label>Destination — Kahan jana hai?</label>
-      <select id="destination"></select>
-      <label>Distance (km) — agar jagah list mein nahi to khud likhein</label>
-      <input id="distance" type="number" min="1" placeholder="khali chhor dein — khud nikal le ga">
-      <label>Vehicle — Sawari chunein</label>
-      <div class="veh">
-        <button data-v="bike" class="veh-btn active" onclick="pickVehicle('bike',this)"><span class="veh-ico">🏍️</span><span class="veh-name">Bike</span><span class="veh-rate">Rs 15/km</span></button>
-        <button data-v="rickshaw" class="veh-btn" onclick="pickVehicle('rickshaw',this)"><span class="veh-ico">🛺</span><span class="veh-name">Rickshaw</span><span class="veh-rate">Rs 25/km</span></button>
-        <button data-v="car" class="veh-btn" onclick="pickVehicle('car',this)"><span class="veh-ico">🚗</span><span class="veh-name">Car</span><span class="veh-rate">Rs 70/km</span></button>
-      </div>
-      <button class="primary" onclick="estimateFare()">Fare dekhein — Suggested fare</button>
-      <div id="fare-box" class="fare-box hidden"></div>
-      <div id="propose-box" class="hidden">
-        <label>Apni fare offer karein (Rs) — Rider proposes a fare</label>
-        <input id="proposed-fare" type="number" min="1">
-        <label>🕐 Baad ke liye book karein — optional (7 din tak)</label>
-        <div class="row3">
-          <input id="sched-date" type="date">
-          <input id="sched-time" type="time">
-        </div>
-        <p class="muted">Khali chhor dein to ride abhi ki hai. Date + time dein to Scheduled ride ban jaye gi.</p>
-        <button class="primary" onclick="requestRide()">Ride Request karein</button>
-      </div>
-    </div>
-
-    <div class="card hidden" id="offers-card">
-      <p class="eyebrow">Driver offers</p>
-      <h2>Drivers ki offers</h2>
-      <div id="offers-list"></div>
-      <p class="muted">Offer chunein — fare, driver, gaari, rating aur ETA dekh kar.</p>
-    </div>
-
-    <div class="card hidden" id="trip-card">
-      <p class="eyebrow">Live trip</p>
-      <h2>Apki Ride</h2>
-      <div id="trip-info"></div>
-      <div class="row">
-        <button onclick="shareTrip()">🔗 Share Trip</button>
-        <button class="danger" onclick="sosTrip()">🆘 SOS</button>
-        <button onclick="cancelRide()">Cancel</button>
-      </div>
-      <p class="muted" id="share-out"></p>
-      <div id="chat-box" class="chat-box hidden">
-        <h3>Driver se chat 💬</h3>
-        <p class="muted">Sirf is ride ke liye — phone number share nahi hota.</p>
-        <div id="chat-list" class="chat-list"></div>
-        <div class="chat-input-row">
-          <input id="chat-input" placeholder="Message likhein…" maxlength="500">
-          <button onclick="sendChat()">Bhejein</button>
-        </div>
-      </div>
-      <div id="rate-box" class="hidden">
-        <h3>Driver ko rate karein</h3>
-        <div class="stars" id="rate-stars"></div>
-      </div>
-      <div id="tip-box" class="tip-box hidden">
-        <h3>💰 Tip dein — Driver ko shukriya</h3>
-        <p class="muted">Tip 100% driver ko milti hai — is par koi commission nahi kat-ti.</p>
-        <div class="tip-btns">
-          <button onclick="addTip(20)">Rs 20</button>
-          <button onclick="addTip(50)">Rs 50</button>
-          <button onclick="addTip(100)">Rs 100</button>
-        </div>
-        <div class="chat-input-row">
-          <input id="tip-custom" type="number" min="1" max="5000" placeholder="Apni marzi ki tip (Rs)">
-          <button onclick="addTipCustom()">Tip dein</button>
-        </div>
-        <p class="muted" id="tip-out"></p>
-      </div>
-    </div>
-
-    <div class="card">
-      <p class="eyebrow">History</p>
-      <h2>Meri Rides — History &amp; Receipts</h2>
-      <button onclick="loadHistory()">History dekhein</button>
-      <div id="history-list"></div>
-    </div>
-
-    <div class="card sos-card">
-      <p class="eyebrow">Emergency</p>
-      <h2>Madad</h2>
-      <p>Police: <a href="tel:15"><strong>15</strong></a> &nbsp;•&nbsp; Rescue: <a href="tel:1122"><strong>1122</strong></a></p>
-      <p class="muted">Ride ke doran SOS button se trip share karein.</p>
-    </div>
-  </section>
-
-  <!-- ============ DRIVER ============ -->
-  <section id="tab-driver" class="tab">
-    <div class="card" id="driver-auth">
-      <p class="eyebrow">Driver</p>
-      <h2>Driver Login — phone + password</h2>
-      <input id="driver-phone" placeholder="Phone — misal: 0301-0000003">
-      <input id="driver-password" type="password" placeholder="Password (kam az kam 6 harf)">
-      <button class="primary" onclick="driverLogin()">Driver Dashboard kholein</button>
-      <p class="muted">Demo drivers: Ahmed (Bike) 0301-0000001, Bilal (Rickshaw) 0301-0000002, Usman (Car) 0301-0000003, Hassan (Car) 0301-0000004. Pehli login par apna password set karein.</p>
-      <p class="muted" id="driver-who"></p>
-    </div>
-
-    <div class="card hidden" id="driver-dash">
-      <p class="eyebrow">Driver dashboard</p>
-      <h2>Driver Dashboard</h2>
-      <div id="driver-info"></div>
-      <p class="muted" id="loc-status"></p>
-      <div class="row">
-        <button id="online-btn" class="primary" onclick="toggleOnline()">Go Online</button>
-        <button onclick="loadRequests()">Requests dekhein</button>
-      </div>
-      <div id="requests-list"></div>
-      <div id="driver-chat-card" class="hidden">
-        <h3>Rider se chat 💬</h3>
-        <p class="muted" id="driver-chat-who"></p>
-        <div id="driver-chat-list" class="chat-list"></div>
-        <div class="chat-input-row">
-          <input id="driver-chat-input" placeholder="Message likhein…" maxlength="500">
-          <button onclick="sendDriverChat()">Bhejein</button>
-        </div>
-      </div>
-      <h3>Wallet — Prepaid</h3>
-      <div id="wallet-info"></div>
-      <input id="topup-amount" type="number" min="500" placeholder="Top-up amount (Rs) — kam az kam Rs 500">
-      <input id="topup-tid" placeholder="JazzCash TID (transaction ID)">
-      <button onclick="topup()">Top-up request bhejein — JazzCash 03266040350 par bhejein</button>
-      <p class="muted">Top-up: JazzCash <strong>03266040350</strong> par payment bhejein, phir TID yahan likhein. <b>Balance tabhi barhe ga jab owner TID verify kar ke approve karega</b> — fake TID se balance nahi milta. Sadapay number owner set karega (Admin settings).</p>
-      <div id="topup-requests"></div>
-      <h3>Earnings — Kamai</h3>
-      <div class="row">
-        <button onclick="loadEarnings(1)">Aaj (Today)</button>
-        <button onclick="loadEarnings(7)">7 Din (Week)</button>
-      </div>
-      <div id="earnings-info"></div>
-      <h3>Meri Rides</h3>
-      <button onclick="loadDriverRides()">Rides dekhein</button>
-      <div id="driver-rides"></div>
-    </div>
-
-    <div class="card">
-      <p class="eyebrow">New driver</p>
-      <h2>Driver Registration — Naya driver</h2>
-      <p class="card-sub">CNIC, driving licence aur vehicle registration zaroori hai. Owner approve karega.</p>
-      <input id="reg-name" placeholder="Naam">
-      <input id="reg-phone" placeholder="Phone">
-      <input id="reg-password" type="password" placeholder="Password (kam az kam 6 harf)">
-      <select id="reg-vehicle"><option value="bike">Bike</option><option value="rickshaw">Rickshaw</option><option value="car">Car</option></select>
-      <input id="reg-model" placeholder="Gaari / Bike model — misal: Honda CD 70">
-      <input id="reg-plate" placeholder="Number plate">
-      <input id="reg-cnic" placeholder="CNIC — misal: 35202-1234567-1">
-      <input id="reg-licence" placeholder="Driving licence number">
-      <input id="reg-vehreg" placeholder="Vehicle registration number">
-      <button class="primary" onclick="registerDriver()">Register karein</button>
-      <p class="muted" id="reg-out"></p>
-    </div>
-  </section>
-
-  <!-- ============ ADMIN ============ -->
-  <section id="tab-admin" class="tab">
-    <div class="card" id="admin-auth">
-      <p class="eyebrow">Owner</p>
-      <h2>Owner / Admin — Login</h2>
-      <div id="admin-setup-box" class="hidden">
-        <p class="card-sub"><b>Pehli dafa setup:</b> neeche wala PIN sirf ek dafa kaam karega — owner account banane ke liye. Us ke baad PIN band ho jaye ga, sirf phone + password login hoga.</p>
-        <input id="admin-setup-name" placeholder="Owner ka naam">
-        <input id="admin-setup-phone" placeholder="Owner phone" inputmode="tel">
-        <input id="admin-setup-pin" type="password" placeholder="Maujooda Admin PIN (ek dafa)">
-        <input id="admin-setup-password" type="password" placeholder="Naya admin password (kam az kam 6 harf)">
-        <button class="primary" onclick="adminSetup()">Owner account banayein</button>
-      </div>
-      <div id="admin-login-box">
-        <input id="admin-phone" placeholder="Admin phone" inputmode="tel">
-        <input id="admin-password" type="password" placeholder="Admin password">
-        <button class="primary" onclick="adminLogin()">Admin kholein</button>
-      </div>
-      <p class="muted" id="admin-out"></p>
-    </div>
-    <div id="admin-dash" class="hidden">
-      <div class="card">
-        <p class="eyebrow">Live</p>
-        <h2>Live Drivers — Online map</h2>
-        <div id="live-drivers"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Top-ups</p>
-        <h2>Top-up Requests — TID verify kar ke Approve / Reject</h2>
-        <p class="card-sub">Driver ki payment tabhi wallet mein jaye gi jab aap JazzCash app mein TID check kar ke approve karein.</p>
-        <button onclick="loadTopups()">Pending top-ups dekhein</button>
-        <div id="topups-out"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Users</p>
-        <h2>Passengers &amp; Drivers — Manage</h2>
-        <button onclick="loadAdminUsers()">Users dekhein</button>
-        <div id="admin-users"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Rides</p>
-        <h2>All Rides — Sab rides</h2>
-        <button onclick="loadAdminRides()">Rides dekhein</button>
-        <div id="admin-rides"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Drivers</p>
-        <h2>Drivers — Approve / Block</h2>
-        <button onclick="loadAdminDrivers()">Drivers dekhein</button>
-        <div id="admin-drivers"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Settings</p>
-        <h2>Fare &amp; Commission Settings — foran lagoo hoti hain</h2>
-        <label>Bike Rs/km</label><input id="set-bike" type="number">
-        <label>Rickshaw Rs/km</label><input id="set-rickshaw" type="number">
-        <label>Car Rs/km</label><input id="set-car" type="number">
-        <label>Minimum fare — Bike / Rickshaw / Car (Rs)</label>
-        <div class="row3"><input id="set-min-bike" type="number"><input id="set-min-rickshaw" type="number"><input id="set-min-car" type="number"></div>
-        <label>Commission %</label><input id="set-commission" type="number">
-        <label>Booking fee Rs / ride</label><input id="set-fee" type="number">
-        <label>JazzCash number</label><input id="set-jazzcash">
-        <label>Sadapay number (owner bharein — khali hai)</label><input id="set-sadapay" placeholder="Sadapay number yahan likhein">
-        <button class="primary" onclick="saveSettings()">Settings save karein</button>
-        <p class="muted" id="settings-out"></p>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Wallet</p>
-        <h2>Wallet Ledger — Driver ka hisab</h2>
-        <input id="ledger-driver" type="number" placeholder="Driver user ID">
-        <button onclick="loadLedger()">Ledger dekhein</button>
-        <div id="ledger-out"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Safety</p>
-        <h2>Complaints &amp; SOS</h2>
-        <button onclick="loadComplaints()">Complaints dekhein</button>
-        <div id="complaints-out"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Promo codes</p>
-        <h2>Promo Codes — Foundation</h2>
-        <p class="card-sub">Promo codes yahan banaye ja sakte hain. Fare mein discount lagana agle phase mein aaye ga.</p>
-        <input id="promo-code" placeholder="Code — misal: CHUNIAN10">
-        <select id="promo-type"><option value="percent">Percent %</option><option value="fixed">Fixed Rs</option></select>
-        <input id="promo-value" type="number" min="1" placeholder="Discount — % ya Rs">
-        <button onclick="createPromo()">Promo banayein</button>
-        <button onclick="loadPromos()">Promos dekhein</button>
-        <div id="promos-out"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Security</p>
-        <h2>Admin Password Badlein</h2>
-        <input id="admin-current-pw" type="password" placeholder="Maujooda password">
-        <input id="admin-new-pw" type="password" placeholder="Naya password (kam az kam 6 harf)">
-        <button onclick="adminChangePassword()">Password badlein</button>
-        <p class="muted" id="admin-pw-out"></p>
-        <button onclick="logoutUser()">Admin Logout</button>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Report</p>
-        <h2>7-Day Report</h2>
-        <button onclick="loadReport()">Report dekhein</button>
-        <div id="report-out"></div>
-      </div>
-      <div class="card">
-        <p class="eyebrow">Profit</p>
-        <h2>Profit Calculator — ESTIMATES ONLY (koi guarantee nahi)</h2>
-        <p class="card-sub">Research ke mutabiq: lean monthly cost ~Rs 60,000. Break-even ke liye 30–50 rides/day chahiye. Ye sirf andaza hai.</p>
-        <label>Average fare (Rs)</label><input id="calc-fare" type="number" value="300">
-        <label>Monthly cost (Rs)</label><input id="calc-cost" type="number" value="60000">
-        <button onclick="loadProfit()">Calculate karein</button>
-        <div id="profit-out"></div>
-      </div>
-    </div>
-  </section>
+  <div class="card sos-card">
+    <p class="eyebrow" data-i18n="emergency">Emergency</p>
+    <p><span data-i18n="police">Police 15</span>: <a href="tel:15"><strong>15</strong></a> &nbsp;•&nbsp; <span data-i18n="rescue">Rescue 1122</span>: <a href="tel:1122"><strong>1122</strong></a></p>
+  </div>
 </main>
 
 <footer>
-  <p><strong>Chunian Ride — Version 1 (Testing)</strong> — Chunian, Tehsil Chunian, District Kasur, Punjab. ~70 km south of Lahore, Pattoki–Kasur road.</p>
-  <p>Uber Pakistan mein nahi chalta (30 Apr 2024 se band) aur Careem ride-hailing 18 Jul 2025 se band — ye local inDrive-style service hai: negotiated fare, cash payment, low commission.</p>
-  <p>Demo drivers aur demo rides testing ke liye hain. Emergency: Police 15 • Rescue 1122.</p>
+  <p data-i18n="footer_about">Chunian Ride — inDrive-style ride booking for Chunian, Tehsil Chunian, District Kasur. Bike, rickshaw, car and AC car. Cash payment, negotiated fares.</p>
+  <p data-i18n="footer_note">Uber stopped in Pakistan on 30 Apr 2024 and Careem ride-hailing on 18 Jul 2025 — this is a local inDrive-style service.</p>
+  <p data-i18n="emergency">Emergency: Police 15 • Rescue 1122</p>
 </footer>
 
-<nav class="tabs bottom-nav">
-  <button data-tab="rider" class="tab-btn active"><span class="ico">🚖</span><span>Rider</span></button>
-  <button data-tab="driver" class="tab-btn"><span class="ico">🧑‍✈️</span><span>Driver</span></button>
-  <button data-tab="admin" class="tab-btn"><span class="ico">🛡️</span><span>Owner</span></button>
-</nav>
-
-<!-- Login first: separate Rider / Driver login screens, Owner as a small option -->
-<div id="welcome" class="welcome">
-  <div class="welcome-card">
-    <img src="/logo.png" alt="Chunian Ride logo" class="welcome-logo">
-    <h1>Chunian Ride</h1>
-    <p class="welcome-sub">Chunian ki apni ride service — Bike • Rickshaw • Car</p>
-    <p class="welcome-note">Cash payment • Negotiated fare • Low commission</p>
-    <button class="welcome-opt" onclick="enterApp('rider')">
-      <span class="wo-ico">🚖</span>
-      <span class="wo-text"><b>Rider Login</b><small>Sawari book karein — User</small></span>
-      <span class="wo-arrow">›</span>
-    </button>
-    <button class="welcome-opt" onclick="enterApp('driver')">
-      <span class="wo-ico">🧑‍✈️</span>
-      <span class="wo-text"><b>Driver Login</b><small>Ride lein aur kamayein</small></span>
-      <span class="wo-arrow">›</span>
-    </button>
-    <button class="welcome-owner" onclick="enterApp('admin')">Owner / Admin →</button>
-    <p class="welcome-foot">Emergency: Police 15 • Rescue 1122</p>
-  </div>
-</div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/app.js?v=4"></script>
+<script src="/shared.js?v=5"></script>
+<script>
+  initLangToggle();
+  applyI18n();
+</script>
 </body>
 </html>

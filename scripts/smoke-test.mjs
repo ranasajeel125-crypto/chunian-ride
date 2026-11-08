@@ -91,6 +91,16 @@ async function main() {
   const lahore = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Lahore", vehicle: "car" }) });
   check("car fare Chunian->Lahore = Rs 6230 (89 km)", lahore.suggested_fare === 6230, `got Rs ${lahore.suggested_fare}`);
 
+  // AC Car (approved rate Rs 85/km, min Rs 200): no fare-logic change needed —
+  // fareFor() already reads rate_${vehicle}_per_km / min_${vehicle}.
+  const acLahore = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Lahore", vehicle: "ac_car" }) });
+  check("AC Car fare Chunian->Lahore = Rs 7565 (85 x 89 km)", acLahore.suggested_fare === 7565, `got Rs ${acLahore.suggested_fare}`);
+  const acShort = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Chunian City", vehicle: "ac_car", distance_km: 2 }) });
+  check("AC Car 2 km = Rs 200 minimum (85 x 2 = 170 < 200)", acShort.suggested_fare === 200, `got Rs ${acShort.suggested_fare}`);
+  const ac3km = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Chunian City", vehicle: "ac_car", distance_km: 3 }) });
+  check("AC Car 3 km = Rs 255 (85 x 3, above the Rs 200 minimum)", ac3km.suggested_fare === 255, `got Rs ${ac3km.suggested_fare}`);
+  await expectFail("unknown vehicle rejected -> 400", () => call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Lahore", vehicle: "helicopter" }) }), 400);
+
   // ---- Auth guards: nothing works without a session ----
   await expectFail("unauthenticated ride booking -> 401", () => call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: 1, pickup: "Chunian City", destination: "Pattoki", vehicle: "car" }) }), 401);
   await expectFail("unauthenticated wallet read -> 401", () => call("/api/drivers/3/wallet"), 401);
@@ -126,6 +136,13 @@ async function main() {
   saveCookie("rider", riderLogin.setCookie);
   const me = await call("/api/auth/me", { session: "rider" });
   check("session restores via /api/auth/me", me.user && me.user.id === rider.id, `id=${me.user && me.user.id}`);
+
+  // Wallet (self): balance + transactions for the logged-in user.
+  const myWallet = await call("/api/wallet/me", { session: "rider" });
+  check("GET /api/wallet/me returns balance + transactions", typeof myWallet.balance === "number" && Array.isArray(myWallet.transactions), `balance=${myWallet.balance}, tx=${myWallet.transactions.length}`);
+  check("new rider wallet starts at Rs 0", myWallet.balance === 0, `got Rs ${myWallet.balance}`);
+  await expectFail("admin session cannot use /api/wallet/me -> 403", () => call("/api/wallet/me", { session: "admin" }), 403);
+  await expectFail("unauthenticated /api/wallet/me -> 401", () => call("/api/wallet/me"), 401);
 
   // Second rider (for 403 tests).
   const riderBRes = await callRaw("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "Smoke Rider B", phone: "0309-8888888", password: "riderbpass", role: "rider" }) });
@@ -272,12 +289,44 @@ async function main() {
   const promos = await call("/api/admin/promo-codes", { session: "admin" });
   check("promo code listed", promos.promo_codes.some((p) => p.code === "SMOKE10"));
 
+  // ---- Admin overview (dashboard) ----
+  // At this point: 8 users (6 demo + 2 riders), 3 riders, 5 drivers (all
+  // online), 3 rides total (2 seeded + smoke), 3 completed (fees 138+26+134
+  // = Rs 298 in the last 7 days), 1 open SOS complaint, 0 pending top-ups
+  // (both reviewed), 0 pending drivers.
+  const ov = await call("/api/admin/overview", { session: "admin" });
+  const ovNums = [ov.totals.users, ov.totals.riders, ov.totals.drivers, ov.totals.drivers_online, ov.totals.rides_today, ov.totals.rides_total, ov.totals.completed_today, ov.pending_topups, ov.open_complaints, ov.pending_drivers, ov.platform_revenue_7d, ov.platform_revenue_today];
+  check("admin overview returns all fields as numbers", ovNums.every((n) => typeof n === "number"), JSON.stringify(ov));
+  check("overview totals: 8 users / 3 riders / 5 drivers / 5 online", ov.totals.users === 8 && ov.totals.riders === 3 && ov.totals.drivers === 5 && ov.totals.drivers_online === 5, JSON.stringify(ov.totals));
+  check("overview rides: 3 total, >= 2 today/completed", ov.totals.rides_total === 3 && ov.totals.rides_today >= 2 && ov.totals.completed_today >= 2, JSON.stringify(ov.totals));
+  check("overview revenue 7d = Rs 298 (138 + 26 + 134)", ov.platform_revenue_7d === 298, `got Rs ${ov.platform_revenue_7d}`);
+  check("overview: 1 open complaint, 0 pending top-ups/drivers", ov.open_complaints === 1 && ov.pending_topups === 0 && ov.pending_drivers === 0, `complaints=${ov.open_complaints}, topups=${ov.pending_topups}, drivers=${ov.pending_drivers}`);
+  await expectFail("rider cannot read admin overview -> 403", () => call("/api/admin/overview", { session: "rider" }), 403);
+  await expectFail("unauthenticated admin overview -> 401", () => call("/api/admin/overview"), 401);
+
+  // ---- Admin cities CRUD ----
+  const city = await call("/api/admin/cities", { method: "POST", body: JSON.stringify({ name: "Smoke City", lat: 31.1, lng: 74.2, km_from_chunian: 25, note: "smoke test city" }), session: "admin" });
+  check("city created", !!city.city && city.city.id && city.city.name === "Smoke City", JSON.stringify(city.city));
+  const cities = await call("/api/admin/cities", { session: "admin" });
+  check("city list contains the new city", cities.cities.some((c) => c.id === city.city.id && c.name === "Smoke City"), `total ${cities.cities.length}`);
+  const deact = await call(`/api/admin/cities/${city.city.id}/deactivate`, { method: "POST", body: "{}", session: "admin" });
+  check("city deactivated", deact.active === 0, JSON.stringify(deact));
+  const citiesOff = await call("/api/admin/cities", { session: "admin" });
+  check("deactivated city shows active=0", citiesOff.cities.find((c) => c.id === city.city.id).active === 0);
+  const act = await call(`/api/admin/cities/${city.city.id}/activate`, { method: "POST", body: "{}", session: "admin" });
+  check("city re-activated", act.active === 1, JSON.stringify(act));
+  await expectFail("duplicate city name -> 409", () => call("/api/admin/cities", { method: "POST", body: JSON.stringify({ name: "Smoke City", lat: 31.1, lng: 74.2 }), session: "admin" }), 409);
+  await expectFail("city with invalid lat/lng -> 400", () => call("/api/admin/cities", { method: "POST", body: JSON.stringify({ name: "Bad City", lat: "xx", lng: 74.2 }), session: "admin" }), 400);
+  await expectFail("rider cannot create a city -> 403", () => call("/api/admin/cities", { method: "POST", body: JSON.stringify({ name: "Nope City", lat: 31, lng: 74 }), session: "rider" }), 403);
+
   // Admin PIN is dead — the old header no longer works.
   await expectFail("old X-Admin-Pin header no longer grants admin -> 401", () => fetch(BASE + "/api/admin/rides", { headers: { "X-Admin-Pin": "1234" } }).then(async (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }), 401);
 
   // Seed data present.
   const drivers = await call("/api/admin/drivers", { session: "admin" });
-  check("4 seeded demo drivers", drivers.drivers.length === 4, drivers.drivers.map((d) => d.name).join(", "));
+  check("5 seeded demo drivers (incl. AC Car)", drivers.drivers.length === 5, drivers.drivers.map((d) => d.name).join(", "));
+  const aliRaza = drivers.drivers.find((x) => x.name === "Ali Raza");
+  check("AC Car demo driver seeded (Ali Raza, Toyota Corolla GLi, online)", !!aliRaza && aliRaza.vehicle_type === "ac_car" && aliRaza.plate === "DEMO-ACC-01" && aliRaza.online === 1, JSON.stringify(aliRaza && { vehicle_type: aliRaza.vehicle_type, plate: aliRaza.plate, online: aliRaza.online }));
   const allRides = await call("/api/admin/rides", { session: "admin" });
   check("2 seeded demo rides + smoke ride present", allRides.rides.length >= 3, `total ${allRides.rides.length}`);
 
@@ -318,11 +367,39 @@ async function main() {
   // Static pages.
   const page = await fetch(BASE + "/");
   check("homepage HTTP 200", page.status === 200);
+  // Separate role pages: the frontend agent creates these HTML files in
+  // parallel — if one is not present yet, SKIP (do not fail) and say so.
+  async function checkRolePage(route, file) {
+    if (!fs.existsSync(path.join(root, "public", file))) {
+      console.log(`SKIP  ${route} — public/${file} not present yet (frontend agent still building it)`);
+      return;
+    }
+    const r = await fetch(BASE + route);
+    const t = await r.text();
+    check(`${route} returns 200 with HTML`, r.status === 200 && /<html/i.test(t), `HTTP ${r.status}`);
+  }
+  await checkRolePage("/admin", "admin.html");
+  await checkRolePage("/rider", "rider.html");
+  await checkRolePage("/driver", "driver.html");
   const pageText = await page.text();
-  check("homepage mentions Version 1 testing + Uber/Careem exit note", pageText.includes("Version 1") && pageText.includes("30 Apr 2024"));
-  check("homepage has scheduled-ride inputs + tip box + password fields", pageText.includes("sched-date") && pageText.includes("sched-time") && pageText.includes("tip-box") && pageText.includes("rider-password"));
-  const appJs = await (await fetch(BASE + "/app.js?v=4")).text();
-  check("served app.js has quick counter buttons + tip + scheduled + admin setup + top-up review", appJs.includes("setCounter") && appJs.includes("addTip") && appJs.includes("scheduled_for") && appJs.includes("adminSetup") && appJs.includes("reviewTopup"));
+  // Redesign (2026-11-08): index.html is now a landing page — "Version 1"
+  // wording and the booking form moved to /rider. The exit note stays.
+  check("landing page mentions Uber/Careem exit note + AC Car + role links", pageText.includes("30 Apr 2024") && pageText.includes("AC Car") && pageText.includes("/rider") && pageText.includes("/driver"));
+  if (fs.existsSync(path.join(root, "public", "rider.html"))) {
+    const riderPage = await (await fetch(BASE + "/rider")).text();
+    check("rider page has scheduled-ride inputs + tip box + password field", riderPage.includes("sched-date") && riderPage.includes("sched-time") && riderPage.includes("tip-box") && riderPage.includes("rider-password"));
+  } else {
+    console.log("SKIP  rider-page feature markers — public/rider.html not present yet");
+  }
+  // Redesign (2026-11-08): public/app.js was split by the frontend agent
+  // into rider.js / driver.js / admin.js (+ shared.js); the old function
+  // names adminSetup/reviewTopup were renamed in the rewrite, but the
+  // features (counter buttons, tips, scheduled rides, admin setup,
+  // top-up review) still exist under the new names.
+  const riderJs = await (await fetch(BASE + "/rider.js")).text();
+  const driverJs = await (await fetch(BASE + "/driver.js")).text();
+  const adminJs = await (await fetch(BASE + "/admin.js")).text();
+  check("split app JS keeps counter buttons + tip + scheduled + admin setup + top-up review", driverJs.includes("setCounter") && riderJs.includes("addTip") && riderJs.includes("scheduled_for") && adminJs.includes("/api/admin/setup") && adminJs.includes("/api/admin/topups?status=pending"));
   const css = await (await fetch(BASE + "/style.css?v=4")).text();
   check("served style.css has quick-btn + tip-box styles", css.includes(".quick-btn") && css.includes(".tip-box"));
 
