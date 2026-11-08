@@ -52,11 +52,16 @@
   <section id="tab-rider" class="tab active">
     <div class="card" id="rider-auth">
       <p class="eyebrow">Rider</p>
-      <h2>Rider Signup — apna number dein</h2>
-      <p class="card-sub">Pehli dafa signup karein, phir har dafa auto login.</p>
+      <h2>Rider Login / Signup</h2>
+      <p class="card-sub">Phone + password se login karein. Pehli dafa naam + phone + password dein — signup ho jaye ga.</p>
       <input id="rider-name" placeholder="Apna naam / Your name">
       <input id="rider-phone" placeholder="Phone — misal: 03001234567" inputmode="tel">
-      <button class="primary" onclick="riderSignup()">Signup / Login</button>
+      <input id="rider-password" type="password" placeholder="Password (kam az kam 6 harf)">
+      <div class="row">
+        <button class="primary" onclick="riderSignup()">Signup</button>
+        <button onclick="riderLogin()">Login</button>
+        <button onclick="logoutUser()">Logout</button>
+      </div>
       <p class="muted" id="rider-who"></p>
     </div>
 
@@ -155,10 +160,11 @@
   <section id="tab-driver" class="tab">
     <div class="card" id="driver-auth">
       <p class="eyebrow">Driver</p>
-      <h2>Driver Login — apna number dein</h2>
+      <h2>Driver Login — phone + password</h2>
       <input id="driver-phone" placeholder="Phone — misal: 0301-0000003">
+      <input id="driver-password" type="password" placeholder="Password (kam az kam 6 harf)">
       <button class="primary" onclick="driverLogin()">Driver Dashboard kholein</button>
-      <p class="muted">Demo drivers: Ahmed (Bike) 0301-0000001, Bilal (Rickshaw) 0301-0000002, Usman (Car) 0301-0000003, Hassan (Car) 0301-0000004.</p>
+      <p class="muted">Demo drivers: Ahmed (Bike) 0301-0000001, Bilal (Rickshaw) 0301-0000002, Usman (Car) 0301-0000003, Hassan (Car) 0301-0000004. Pehli login par apna password set karein.</p>
       <p class="muted" id="driver-who"></p>
     </div>
 
@@ -183,10 +189,11 @@
       </div>
       <h3>Wallet — Prepaid</h3>
       <div id="wallet-info"></div>
-      <input id="topup-amount" type="number" min="1" placeholder="Top-up amount (Rs)">
+      <input id="topup-amount" type="number" min="500" placeholder="Top-up amount (Rs) — kam az kam Rs 500">
       <input id="topup-tid" placeholder="JazzCash TID (transaction ID)">
-      <button onclick="topup()">Top-up — JazzCash 03266040350 par bhejein</button>
-      <p class="muted">Top-up: JazzCash <strong>03266040350</strong> par payment bhejein, phir TID yahan likhein. Sadapay number owner set karega (Admin settings).</p>
+      <button onclick="topup()">Top-up request bhejein — JazzCash 03266040350 par bhejein</button>
+      <p class="muted">Top-up: JazzCash <strong>03266040350</strong> par payment bhejein, phir TID yahan likhein. <b>Balance tabhi barhe ga jab owner TID verify kar ke approve karega</b> — fake TID se balance nahi milta. Sadapay number owner set karega (Admin settings).</p>
+      <div id="topup-requests"></div>
       <h3>Earnings — Kamai</h3>
       <div class="row">
         <button onclick="loadEarnings(1)">Aaj (Today)</button>
@@ -204,6 +211,7 @@
       <p class="card-sub">CNIC, driving licence aur vehicle registration zaroori hai. Owner approve karega.</p>
       <input id="reg-name" placeholder="Naam">
       <input id="reg-phone" placeholder="Phone">
+      <input id="reg-password" type="password" placeholder="Password (kam az kam 6 harf)">
       <select id="reg-vehicle"><option value="bike">Bike</option><option value="rickshaw">Rickshaw</option><option value="car">Car</option></select>
       <input id="reg-model" placeholder="Gaari / Bike model — misal: Honda CD 70">
       <input id="reg-plate" placeholder="Number plate">
@@ -219,9 +227,20 @@
   <section id="tab-admin" class="tab">
     <div class="card" id="admin-auth">
       <p class="eyebrow">Owner</p>
-      <h2>Owner / Admin — PIN dein</h2>
-      <input id="admin-pin" type="password" placeholder="Admin PIN (default 1234 — pehle use ke baad badlein)">
-      <button class="primary" onclick="adminLogin()">Admin kholein</button>
+      <h2>Owner / Admin — Login</h2>
+      <div id="admin-setup-box" class="hidden">
+        <p class="card-sub"><b>Pehli dafa setup:</b> neeche wala PIN sirf ek dafa kaam karega — owner account banane ke liye. Us ke baad PIN band ho jaye ga, sirf phone + password login hoga.</p>
+        <input id="admin-setup-name" placeholder="Owner ka naam">
+        <input id="admin-setup-phone" placeholder="Owner phone" inputmode="tel">
+        <input id="admin-setup-pin" type="password" placeholder="Maujooda Admin PIN (ek dafa)">
+        <input id="admin-setup-password" type="password" placeholder="Naya admin password (kam az kam 6 harf)">
+        <button class="primary" onclick="adminSetup()">Owner account banayein</button>
+      </div>
+      <div id="admin-login-box">
+        <input id="admin-phone" placeholder="Admin phone" inputmode="tel">
+        <input id="admin-password" type="password" placeholder="Admin password">
+        <button class="primary" onclick="adminLogin()">Admin kholein</button>
+      </div>
       <p class="muted" id="admin-out"></p>
     </div>
     <div id="admin-dash" class="hidden">
@@ -229,6 +248,19 @@
         <p class="eyebrow">Live</p>
         <h2>Live Drivers — Online map</h2>
         <div id="live-drivers"></div>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Top-ups</p>
+        <h2>Top-up Requests — TID verify kar ke Approve / Reject</h2>
+        <p class="card-sub">Driver ki payment tabhi wallet mein jaye gi jab aap JazzCash app mein TID check kar ke approve karein.</p>
+        <button onclick="loadTopups()">Pending top-ups dekhein</button>
+        <div id="topups-out"></div>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Users</p>
+        <h2>Passengers &amp; Drivers — Manage</h2>
+        <button onclick="loadAdminUsers()">Users dekhein</button>
+        <div id="admin-users"></div>
       </div>
       <div class="card">
         <p class="eyebrow">Rides</p>
@@ -269,6 +301,26 @@
         <h2>Complaints &amp; SOS</h2>
         <button onclick="loadComplaints()">Complaints dekhein</button>
         <div id="complaints-out"></div>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Promo codes</p>
+        <h2>Promo Codes — Foundation</h2>
+        <p class="card-sub">Promo codes yahan banaye ja sakte hain. Fare mein discount lagana agle phase mein aaye ga.</p>
+        <input id="promo-code" placeholder="Code — misal: CHUNIAN10">
+        <select id="promo-type"><option value="percent">Percent %</option><option value="fixed">Fixed Rs</option></select>
+        <input id="promo-value" type="number" min="1" placeholder="Discount — % ya Rs">
+        <button onclick="createPromo()">Promo banayein</button>
+        <button onclick="loadPromos()">Promos dekhein</button>
+        <div id="promos-out"></div>
+      </div>
+      <div class="card">
+        <p class="eyebrow">Security</p>
+        <h2>Admin Password Badlein</h2>
+        <input id="admin-current-pw" type="password" placeholder="Maujooda password">
+        <input id="admin-new-pw" type="password" placeholder="Naya password (kam az kam 6 harf)">
+        <button onclick="adminChangePassword()">Password badlein</button>
+        <p class="muted" id="admin-pw-out"></p>
+        <button onclick="logoutUser()">Admin Logout</button>
       </div>
       <div class="card">
         <p class="eyebrow">Report</p>
@@ -324,6 +376,6 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/app.js?v=3"></script>
+<script src="/app.js?v=4"></script>
 </body>
 </html>

@@ -1,13 +1,9 @@
 // Chunian Ride — frontend logic (no build step).
 const $ = (id) => document.getElementById(id);
-const store = {
-  get rider() { try { return JSON.parse(localStorage.getItem("cr_rider") || "null"); } catch { return null; } },
-  set rider(v) { localStorage.setItem("cr_rider", JSON.stringify(v)); },
-  get driver() { try { return JSON.parse(localStorage.getItem("cr_driver") || "null"); } catch { return null; } },
-  set driver(v) { localStorage.setItem("cr_driver", JSON.stringify(v)); },
-  get pin() { return sessionStorage.getItem("cr_pin") || ""; },
-  set pin(v) { sessionStorage.setItem("cr_pin", v); },
-};
+// Session state lives in memory only. The server session cookie (HTTP-only)
+// is what actually authenticates requests — no user data or PIN is stored
+// in the browser any more.
+const store = { rider: null, driver: null, admin: null };
 let places = [];
 let vehicle = "bike";
 let currentRide = null;
@@ -45,7 +41,8 @@ function tipLine(tip) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json", ...(opts.admin ? { "X-Admin-Pin": store.pin } : {}) }, ...opts });
+  const { admin, ...fetchOpts } = opts; // 'admin' is only a marker now — auth is the session cookie.
+  const res = await fetch(path, { credentials: "same-origin", headers: { "Content-Type": "application/json" }, ...fetchOpts });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
   return data;
@@ -113,13 +110,29 @@ function pickVehicle(v, el) {
   el.classList.add("active");
 }
 async function riderSignup() {
-  const name = $("rider-name").value.trim(), phone = $("rider-phone").value.trim();
-  if (!name || !phone) return alert("Naam aur phone dono likhein.");
+  const name = $("rider-name").value.trim(), phone = $("rider-phone").value.trim(), password = $("rider-password").value;
+  if (!name || !phone || !password) return alert("Naam, phone aur password teeno likhein.");
   try {
-    const d = await api("/api/signup", { method: "POST", body: JSON.stringify({ name, phone, role: "rider" }) });
+    const d = await api("/api/auth/signup", { method: "POST", body: JSON.stringify({ name, phone, password, role: "rider" }) });
     store.rider = d.user;
     $("rider-who").textContent = `Assalam-o-Alaikum, ${d.user.name} (${d.user.phone}) — ID #${d.user.id}`;
   } catch (e) { alert(e.message); }
+}
+async function riderLogin() {
+  const phone = $("rider-phone").value.trim(), password = $("rider-password").value;
+  if (!phone || !password) return alert("Phone aur password likhein.");
+  try {
+    const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ phone, password }) });
+    store.rider = d.user;
+    $("rider-who").textContent = `Assalam-o-Alaikum, ${d.user.name} (${d.user.phone}) — ID #${d.user.id}`;
+  } catch (e) { alert(e.message); }
+}
+async function logoutUser() {
+  try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch {}
+  store.rider = null; store.driver = null; store.admin = null;
+  $("rider-who").textContent = ""; $("driver-who").textContent = "";
+  $("driver-dash").classList.add("hidden"); $("admin-dash").classList.add("hidden");
+  alert("Logout ho gaya.");
 }
 async function estimateFare() {
   const body = { pickup: $("pickup").value, destination: $("destination").value, vehicle };
@@ -371,10 +384,10 @@ async function loadHistory() {
 
 // ---- Driver ----
 async function driverLogin() {
-  const phone = $("driver-phone").value.trim();
-  if (!phone) return alert("Phone likhein.");
+  const phone = $("driver-phone").value.trim(), password = $("driver-password").value;
+  if (!phone || !password) return alert("Phone aur password likhein.");
   try {
-    const d = await api("/api/signup", { method: "POST", body: JSON.stringify({ name: "Driver", phone, role: "driver" }) });
+    const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ phone, password }) });
     const prof = await api(`/api/drivers/${d.user.id}`);
     store.driver = { ...d.user, ...prof.driver };
     $("driver-who").textContent = `${prof.driver.name} — ${prof.driver.vehicle_model} (${prof.driver.plate}) — Status: ${prof.driver.status}`;
@@ -440,11 +453,17 @@ async function driverDecline(rideId) {
 async function loadWallet() {
   const d = await api(`/api/drivers/${store.driver.id}/wallet`);
   $("wallet-info").innerHTML = `<p>Balance: <b>Rs ${d.wallet_balance}</b></p>` + d.transactions.slice(0, 8).map((t) => `<div class="tx-row">${t.type} — Rs ${t.amount} • ${t.method || ""} ${t.tid || ""} • ${t.note}<br><span class="muted">${new Date(t.created_at).toLocaleString()}</span></div>`).join("");
+  const reqs = [...(d.pending_topups || []), ...(d.past_topups || [])];
+  $("topup-requests").innerHTML = reqs.length ? "<h4>Top-up requests</h4>" + reqs.map((t) => `<div class="tx-row">Rs ${t.amount} • ${t.method} • TID ${escapeHtml(t.tid || "—")} • Status: <b>${t.status}</b>${t.reject_reason ? ` • ${escapeHtml(t.reject_reason)}` : ""}<br><span class="muted">${new Date(t.created_at).toLocaleString()}</span></div>`).join("") : "";
 }
 async function topup() {
   const amount = Number($("topup-amount").value), tid = $("topup-tid").value.trim();
   if (!amount) return alert("Amount likhein.");
-  try { const d = await api(`/api/drivers/${store.driver.id}/topup`, { method: "POST", body: JSON.stringify({ amount, method: "JazzCash", tid }) }); store.driver.wallet_balance = d.wallet_balance; renderDriver(); alert(`Top-up request save — new balance Rs ${d.wallet_balance}. Owner TID verify karega.`); } catch (e) { alert(e.message); }
+  try {
+    const d = await api(`/api/drivers/${store.driver.id}/topup`, { method: "POST", body: JSON.stringify({ amount, method: "JazzCash", tid }) });
+    alert(`Top-up request #${d.request_id} bhej di (Rs ${d.amount}) — status: pending. Balance tabhi barhe ga jab owner TID verify kar ke approve karega.`);
+    loadWallet();
+  } catch (e) { alert(e.message); }
 }
 async function loadEarnings(days) {
   const d = await api(`/api/drivers/${store.driver.id}/earnings?days=${days}`);
@@ -484,30 +503,96 @@ async function completeRide(id) {
 }
 async function rateRider(id) { try { await api(`/api/rides/${id}/rate`, { method: "POST", body: JSON.stringify({ by: "driver", stars: 5 }) }); alert("Rider ko 5 stars diye."); } catch (e) { alert(e.message); } }
 async function registerDriver() {
-  const name = $("reg-name").value.trim(), phone = $("reg-phone").value.trim();
-  if (!name || !phone) return alert("Naam aur phone likhein.");
+  const name = $("reg-name").value.trim(), phone = $("reg-phone").value.trim(), password = $("reg-password").value;
+  if (!name || !phone || !password) return alert("Naam, phone aur password likhein.");
   try {
-    const u = await api("/api/signup", { method: "POST", body: JSON.stringify({ name, phone, role: "driver" }) });
+    const u = await api("/api/auth/signup", { method: "POST", body: JSON.stringify({ name, phone, password, role: "driver" }) });
     const d = await api("/api/drivers/register", { method: "POST", body: JSON.stringify({ user_id: u.user.id, vehicle_type: $("reg-vehicle").value, vehicle_model: $("reg-model").value, plate: $("reg-plate").value, cnic: $("reg-cnic").value, licence: $("reg-licence").value, vehicle_reg: $("reg-vehreg").value }) });
     $("reg-out").textContent = `Registration submit — status: ${d.status}. Owner approve karega.`;
   } catch (e) { $("reg-out").textContent = e.message; }
 }
 
-// ---- Admin ----
-async function adminLogin() {
-  store.pin = $("admin-pin").value.trim();
+// ---- Admin (session login — the shared PIN is gone) ----
+async function checkAdminSetup() {
   try {
-    await api("/api/admin/rides", { admin: true });
-    $("admin-out").textContent = "Admin khul gaya.";
-    $("admin-dash").classList.remove("hidden");
-    const s = (await api("/api/settings")).settings;
-    $("set-bike").value = s.rate_bike_per_km; $("set-rickshaw").value = s.rate_rickshaw_per_km; $("set-car").value = s.rate_car_per_km;
-    $("set-min-bike").value = s.min_bike; $("set-min-rickshaw").value = s.min_rickshaw; $("set-min-car").value = s.min_car;
-    $("set-commission").value = s.commission_pct; $("set-fee").value = s.booking_fee;
-    $("set-jazzcash").value = s.jazzcash_number; $("set-sadapay").value = s.sadapay_number;
-    loadLiveDrivers();
-  } catch (e) { $("admin-out").textContent = "Ghalat PIN."; }
+    const d = await api("/api/admin/setup-needed");
+    $("admin-setup-box").classList.toggle("hidden", !d.setup_needed);
+    $("admin-login-box").classList.toggle("hidden", !!d.setup_needed);
+  } catch {}
 }
+async function adminSetup() {
+  const name = $("admin-setup-name").value.trim(), phone = $("admin-setup-phone").value.trim();
+  const pin = $("admin-setup-pin").value.trim(), password = $("admin-setup-password").value;
+  if (!phone || !pin || !password) return alert("Phone, PIN aur naya password likhein.");
+  try {
+    const d = await api("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin, name: name || "Owner", phone, password }) });
+    store.admin = d.admin;
+    $("admin-out").textContent = d.message || "Owner account ban gaya.";
+    $("admin-setup-box").classList.add("hidden");
+    $("admin-login-box").classList.remove("hidden");
+    openAdminDash();
+  } catch (e) { $("admin-out").textContent = e.message; }
+}
+async function adminLogin() {
+  const phone = $("admin-phone").value.trim(), password = $("admin-password").value;
+  if (!phone || !password) return alert("Phone aur password likhein.");
+  try {
+    const d = await api("/api/admin/login", { method: "POST", body: JSON.stringify({ phone, password }) });
+    store.admin = d.admin;
+    $("admin-out").textContent = "Admin khul gaya.";
+    openAdminDash();
+  } catch (e) { $("admin-out").textContent = e.message; }
+}
+async function openAdminDash() {
+  $("admin-dash").classList.remove("hidden");
+  const s = (await api("/api/settings")).settings;
+  $("set-bike").value = s.rate_bike_per_km; $("set-rickshaw").value = s.rate_rickshaw_per_km; $("set-car").value = s.rate_car_per_km;
+  $("set-min-bike").value = s.min_bike; $("set-min-rickshaw").value = s.min_rickshaw; $("set-min-car").value = s.min_car;
+  $("set-commission").value = s.commission_pct; $("set-fee").value = s.booking_fee;
+  $("set-jazzcash").value = s.jazzcash_number; $("set-sadapay").value = s.sadapay_number;
+  loadLiveDrivers();
+}
+async function adminChangePassword() {
+  const current = $("admin-current-pw").value, next = $("admin-new-pw").value;
+  if (!current || !next) return alert("Maujooda aur naya password dono likhein.");
+  try {
+    const d = await api("/api/admin/change-password", { method: "POST", body: JSON.stringify({ current, next }) });
+    $("admin-pw-out").textContent = d.message || "Password badal gaya.";
+  } catch (e) { $("admin-pw-out").textContent = e.message; }
+}
+async function loadTopups() {
+  const d = await api("/api/admin/topups?status=pending", { admin: true });
+  $("topups-out").innerHTML = d.topups.length ? d.topups.map((t) => `<div class="ride-row"><b>Request #${t.id}</b> — ${escapeHtml(t.driver_name)} (${escapeHtml(t.driver_phone)}) • Rs ${t.amount} • ${t.method} • TID <b>${escapeHtml(t.tid || "—")}</b><br><span class="muted">${new Date(t.created_at).toLocaleString()}</span><br><button class="primary" onclick="reviewTopup(${t.id},'approve')">Approve — TID theek hai</button> <button onclick="reviewTopup(${t.id},'reject')">Reject</button></div>`).join("") : "<p class='muted'>Koi pending top-up nahi.</p>";
+}
+async function reviewTopup(id, action) {
+  try {
+    const d = await api(`/api/admin/topups/${id}/${action}`, { method: "POST", body: JSON.stringify({}), admin: true });
+    alert(action === "approve" ? `Approve ho gaya — driver wallet Rs ${d.wallet_balance} (Rs ${d.amount} credit).` : "Reject ho gaya — koi balance nahi badla.");
+    loadTopups();
+  } catch (e) { alert(e.message); }
+}
+async function loadAdminUsers() {
+  const d = await api("/api/admin/users", { admin: true });
+  $("admin-users").innerHTML = d.users.map((u) => `<div class="driver-row"><b>${escapeHtml(u.name)}</b> (${escapeHtml(u.phone)}) — ${u.role} • Status: <b>${u.status || "active"}</b>${u.demo ? " • Demo" : ""} • Rating: ${ratingText(u.rating, u.rating_count, u.role === "driver" ? "driver" : "rider")} • Wallet Rs ${u.wallet_balance || 0}${u.driver_status ? ` • Driver: ${u.driver_status}` : ""}<br>${u.status === "suspended" ? `<button onclick="adminUser(${u.id},'reactivate')">Reactivate</button>` : `<button onclick="adminUser(${u.id},'suspend')">Suspend</button>`}</div>`).join("") || "<p class='muted'>Koi user nahi.</p>";
+}
+async function adminUser(id, action) {
+  await api(`/api/admin/users/${id}/${action}`, { method: "POST", body: "{}", admin: true });
+  loadAdminUsers();
+}
+async function createPromo() {
+  const code = $("promo-code").value.trim(), discount_type = $("promo-type").value, discount_value = Number($("promo-value").value);
+  if (!code || !discount_value) return alert("Code aur discount likhein.");
+  try {
+    const d = await api("/api/admin/promo-codes", { method: "POST", body: JSON.stringify({ code, discount_type, discount_value }), admin: true });
+    alert(`Promo ${d.code} ban gaya.`);
+    loadPromos();
+  } catch (e) { alert(e.message); }
+}
+async function loadPromos() {
+  const d = await api("/api/admin/promo-codes", { admin: true });
+  $("promos-out").innerHTML = d.promo_codes.map((p) => `<div class="tx-row"><b>${escapeHtml(p.code)}</b> — ${p.discount_type} ${p.discount_value} • Active: ${p.active ? "Yes" : "No"} ${p.active ? `<button onclick="deactivatePromo(${p.id})">Deactivate</button>` : ""}</div>`).join("") || "<p class='muted'>Koi promo nahi.</p>";
+}
+async function deactivatePromo(id) { await api(`/api/admin/promo-codes/${id}/deactivate`, { method: "POST", body: "{}", admin: true }); loadPromos(); }
 async function loadLiveDrivers() {
   try {
     const d = await api("/api/admin/live-drivers", { admin: true });
@@ -557,7 +642,28 @@ async function loadProfit() {
 }
 
 initMap();
-if (store.rider) { $("rider-name").value = store.rider.name; $("rider-phone").value = store.rider.phone; $("rider-who").textContent = `${store.rider.name} (${store.rider.phone}) — ID #${store.rider.id}`; }
-
-// Login-first: show the welcome screen unless a rider/driver session already exists.
-if (store.rider || store.driver) $("welcome").classList.add("hidden");
+checkAdminSetup();
+// Restore the server session (if the cookie is still valid) — no user data
+// is stored in the browser any more; the cookie is the login.
+api("/api/auth/me").then((d) => {
+  if (d.user) {
+    if (d.user.role === "rider") {
+      store.rider = d.user;
+      $("rider-name").value = d.user.name; $("rider-phone").value = d.user.phone;
+      $("rider-who").textContent = `${d.user.name} (${d.user.phone}) — ID #${d.user.id}`;
+    } else if (d.user.role === "driver") {
+      api(`/api/drivers/${d.user.id}`).then((prof) => {
+        store.driver = { ...d.user, ...prof.driver };
+        $("driver-who").textContent = `${prof.driver.name} — ${prof.driver.vehicle_model} (${prof.driver.plate}) — Status: ${prof.driver.status}`;
+        $("driver-dash").classList.remove("hidden");
+        renderDriver();
+      }).catch(() => {});
+    }
+    $("welcome").classList.add("hidden");
+  } else if (d.admin) {
+    store.admin = d.admin;
+    $("admin-out").textContent = `Admin: ${d.admin.name} (${d.admin.phone})`;
+    openAdminDash();
+    $("welcome").classList.add("hidden");
+  }
+}).catch(() => {});

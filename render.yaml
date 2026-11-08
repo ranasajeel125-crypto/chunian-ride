@@ -14,6 +14,6 @@ services:
       - key: TURSO_AUTH_TOKEN
         sync: false # optional — Turso auth token (secret); only needed with TURSO_DATABASE_URL
       - key: ADMIN_PIN
-        sync: false # owner admin PIN for the Admin tab; CHANGE the default "1234" here
+        sync: false # one-time bootstrap key for the FIRST owner account only; after setup the PIN is ignored and only phone + password admin login works — CHANGE the default "1234" here
       - key: NODE_VERSION
         value: "22.23.4"
