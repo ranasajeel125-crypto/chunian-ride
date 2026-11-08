@@ -86,8 +86,10 @@ function requestGpsPickup(silent) {
     (pos) => {
       gpsPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       $("pickup").value = "__gps__";
-      if (gpsMarker) map.removeLayer(gpsMarker);
-      gpsMarker = L.circleMarker([gpsPos.lat, gpsPos.lng], { radius: 8, color: "#0b5ed7", weight: 2, fillColor: "#2f7fe0", fillOpacity: 0.9 }).addTo(map).bindPopup(t("current_location"));
+      if (map) {
+        if (gpsMarker) map.removeLayer(gpsMarker);
+        gpsMarker = L.circleMarker([gpsPos.lat, gpsPos.lng], { radius: 8, color: "#0b5ed7", weight: 2, fillColor: "#2f7fe0", fillOpacity: 0.9 }).addTo(map).bindPopup(t("current_location"));
+      }
       setErr($("gps-err"), "");
       if (!silent) toast(t("gps_ok"), "ok");
       computeGpsDistance();
@@ -426,7 +428,10 @@ async function boot() {
   initLangToggle();
   applyI18n();
   await loadSettings();
-  await initMap();
+  // The map is optional: if Leaflet's CDN fails (offline / blocked), the
+  // whole rider app must NOT die — booking via the place selects still
+  // works, and session restore below must still run.
+  try { await initMap(); } catch (e) { console.warn("[rider] map unavailable, continuing without it:", e && e.message ? e.message : e); }
   $("destination").addEventListener("change", onRouteChange);
   $("pickup").addEventListener("change", () => { if ($("pickup").value !== "__gps__") { gpsPos = null; gpsDistanceKm = null; const p = placeByName($("pickup").value); if (p) setPin("pickup", p); } onRouteChange(); });
   // Session restore: rider stays, driver is redirected, guest sees the login card.
