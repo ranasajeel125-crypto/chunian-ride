@@ -159,8 +159,32 @@ export function requireSelfOrAdmin(getUserId) {
   };
 }
 
-// ---- Login rate limiting (in-memory; per IP + phone) ----
-// 5 failed attempts in 15 minutes -> 429. Successful login clears the count.
+// ---- Admin-setup rate limiting (in-memory; per IP) ----
+// 5 failed setup-code attempts in 15 minutes -> 429. A successful setup
+// clears the count. Separate from the login limiter: the setup endpoint
+// has no phone to key on, and a 4-digit-PIN-era brute force must never
+// become a 64-char-token brute force either.
+const setupAttempts = new Map(); // ip -> { count, firstAt }
+export function setupRateLimit(req, res, next) {
+  const key = req.ip || "?";
+  const entry = setupAttempts.get(key);
+  if (entry && entry.count >= 5 && Date.now() - entry.firstAt < 15 * 60 * 1000) {
+    return res.status(429).json({ error: "Bohat zyada ghalat koshishein — 15 minute baad dobara koshish karein" });
+  }
+  if (entry && Date.now() - entry.firstAt >= 15 * 60 * 1000) setupAttempts.delete(key);
+  req._setupKey = key;
+  next();
+}
+export function setupFailed(req) {
+  const key = req._setupKey;
+  if (!key) return;
+  const entry = setupAttempts.get(key) || { count: 0, firstAt: Date.now() };
+  entry.count += 1;
+  setupAttempts.set(key, entry);
+}
+export function setupSucceeded(req) {
+  if (req._setupKey) setupAttempts.delete(req._setupKey);
+}
 const loginAttempts = new Map(); // key -> { count, firstAt }
 export function loginRateLimit(req, res, next) {
   const key = `${req.ip || "?"}:${normalizePhone((req.body && req.body.phone) || "")}`;

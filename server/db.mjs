@@ -156,8 +156,9 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_type, owner_id)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`,
   // Admin accounts — separate from users. role: 'owner' | 'admin'.
-  // The old shared ADMIN_PIN is only a one-time bootstrap key: it is accepted
-  // solely to create the FIRST admin account, then ignored.
+  // First-admin setup (v2.0) uses a random one-time token: only its
+  // SHA-256 hash is stored (settings key admin_setup_token_hash), the
+  // token is printed once to stdout, and the hash is deleted after use.
   `CREATE TABLE IF NOT EXISTS admins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

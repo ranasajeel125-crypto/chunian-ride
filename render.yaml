@@ -13,7 +13,9 @@ services:
         sync: false # optional — set for persistent data, e.g. libsql://chunian-ride-xxx.turso.io; unset = local SQLite file (resets on redeploy/restart)
       - key: TURSO_AUTH_TOKEN
         sync: false # optional — Turso auth token (secret); only needed with TURSO_DATABASE_URL
-      - key: ADMIN_PIN
-        sync: false # one-time bootstrap key for the FIRST owner account only; after setup the PIN is ignored and only phone + password admin login works — CHANGE the default "1234" here
       - key: NODE_VERSION
         value: "22.23.4"
+    # NOTE (v2.0): ADMIN_PIN is GONE — the server ignores it completely.
+    # First-admin setup now uses a random one-time code printed once in the
+    # Render logs (search "ONE-TIME ADMIN SETUP CODE"). If ADMIN_PIN still
+    # exists as an env var in the Render dashboard, delete it (it is inert).

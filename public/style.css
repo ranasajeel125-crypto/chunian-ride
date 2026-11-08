@@ -75,6 +75,32 @@ header.site {
   cursor: pointer;
   font-family: 'Noto Naskh Arabic', 'Inter', sans-serif;
 }
+/* Segmented EN | اردو control — both languages always visible, the
+   active one highlighted. Replaces the old single "اردو" button that was
+   too easy to miss. */
+.lang-switch {
+  display: inline-flex;
+  border: 1.5px solid var(--sky-200);
+  border-radius: 999px;
+  overflow: hidden;
+  background: #fff;
+  flex-shrink: 0;
+}
+.lang-opt {
+  border: none !important;
+  background: transparent !important;
+  color: var(--blue-dark) !important;
+  font-size: 13.5px !important;
+  font-weight: 800 !important;
+  padding: 8px 13px !important;
+  margin: 0 !important;
+  min-height: 38px !important;
+  border-radius: 0 !important;
+  font-family: 'Noto Naskh Arabic', 'Inter', sans-serif;
+}
+.lang-opt.active { background: var(--navy) !important; color: #fff !important; }
+.lang-opt + .lang-opt { border-left: 1px solid var(--sky-200) !important; }
+.lang-opt + .lang-opt.active { border-left-color: var(--navy) !important; }
 .emergency { display: flex; gap: 6px; flex-shrink: 0; }
 .emergency a {
   text-decoration: none;
@@ -256,8 +282,8 @@ button.primary {
 }
 button.primary:active { background: var(--blue-dark); transform: scale(.985); }
 @media (hover: hover) { button.primary:hover { background: var(--blue-dark); border-color: var(--blue-dark); } }
-.card button:not(.primary):not(.veh-btn):not(.nav-btn):not(.lang-toggle),
-.row button:not(.primary) {
+.card button:not(.primary):not(.veh-btn):not(.nav-btn):not(.lang-toggle):not(.lang-opt),
+.row button:not(.primary):not(.lang-opt) {
   background: #fff;
   border: 1.5px solid var(--blue);
   color: var(--blue-dark);
@@ -269,8 +295,8 @@ button.primary:active { background: var(--blue-dark); transform: scale(.985); }
   min-height: 48px;
 }
 @media (hover: hover) {
-  .card button:not(.primary):not(.veh-btn):not(.nav-btn):not(.lang-toggle):hover,
-  .row button:not(.primary):hover { background: var(--sky-050); }
+  .card button:not(.primary):not(.veh-btn):not(.nav-btn):not(.lang-toggle):not(.lang-opt):hover,
+  .row button:not(.primary):not(.lang-opt):hover { background: var(--sky-050); }
 }
 button.secondary {
   background: var(--sky-050);
@@ -484,6 +510,23 @@ button.danger { border-color: var(--red) !important; color: var(--red) !importan
 .owner-link { text-align: center; margin: 10px 0 14px; }
 .owner-link a { color: var(--blue-dark); font-size: 14px; font-weight: 700; text-decoration: none; }
 .owner-link a:hover { text-decoration: underline; }
+
+/* ---------- Landing rates section (live from /api/settings) ---------- */
+.rates-grid { display: grid; gap: 8px; }
+@media (min-width: 560px) { .rates-grid { grid-template-columns: 1fr 1fr; } }
+.rate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 13px;
+  background: var(--sky-050);
+}
+.rate-ico { font-size: 22px; line-height: 1; }
+.rate-name { font-weight: 800; color: var(--navy); }
+.rate-val { margin-left: auto; font-size: 13.5px; font-weight: 600; color: var(--muted); text-align: right; }
+.version-marker { font-weight: 700; color: var(--navy); }
 
 /* ---------- Footer ---------- */
 footer { max-width: 760px; margin: 0 auto; padding: 18px 16px 28px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }

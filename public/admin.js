@@ -17,7 +17,7 @@ const STRINGS = {
     brand_sub: "Owner Admin",
     logout: "Logout",
     setup_title: "Owner account — first-time setup",
-    setup_note: "This PIN works only once, to create the first owner account. After this, the PIN stops working and only phone + password login works.",
+    setup_note: "This one-time setup code works only once, to create the first owner account. Find it in the Render logs (search \"ONE-TIME ADMIN SETUP CODE\"). After this, the code stops working and only phone + password login works.",
     setup_create: "Create owner account",
     login_title: "Owner / Admin — Login",
     login_note: "Only the owner admin account can open this dashboard.",
@@ -25,7 +25,7 @@ const STRINGS = {
     back_to_app: "← Back to Chunian Ride app",
     label_name: "Owner name",
     label_phone: "Admin phone",
-    label_pin: "One-time Admin PIN",
+    label_pin: "One-time setup code",
     label_password: "Admin password",
     label_new_password: "New password (at least 6 characters)",
     label_current_password: "Current password",
@@ -128,7 +128,7 @@ const STRINGS = {
     stat_rev_today: "Revenue today",
     stat_rev_7d: "Revenue 7 days",
     // Dynamic / toasts / errors
-    err_setup_fields: "Phone, PIN and new password are required.",
+    err_setup_fields: "Phone, setup code and new password are required.",
     err_login_fields: "Phone and password are required.",
     err_pw_fields: "Current and new password are both required.",
     err_ledger_id: "Enter a driver user ID.",
@@ -137,7 +137,7 @@ const STRINGS = {
     err_not_available: "This data is not available yet — the server endpoint is not live.",
     err_load: "Could not load this section. Please try again.",
     err_session: "Your session ended — please log in again.",
-    toast_setup_done: "Owner account created. The PIN will not work again — use phone + password from now on.",
+    toast_setup_done: "Owner account created. The setup code will not work again — use phone + password from now on.",
     toast_login: "Admin opened.",
     toast_saved: "Settings saved — new fares apply immediately.",
     toast_pw_changed: "Password changed.",
@@ -217,7 +217,7 @@ const STRINGS = {
     brand_sub: "اونر ایڈمن",
     logout: "لاگ آؤٹ",
     setup_title: "اونر اکاؤنٹ — پہلی بار سیٹ اپ",
-    setup_note: "یہ PIN صرف ایک بار کام کرے گا، پہلا اونر اکاؤنٹ بنانے کے لیے۔ اس کے بعد PIN بند ہو جائے گا اور صرف فون + پاس ورڈ سے لاگ ان ہوگا۔",
+    setup_note: "یہ ایک بار کا سیٹ اپ کوڈ صرف ایک بار کام کرے گا، پہلا اونر اکاؤنٹ بنانے کے لیے۔ یہ Render لاگز میں ملے گا (\"ONE-TIME ADMIN SETUP CODE\" تلاش کریں)۔ اس کے بعد کوڈ بند ہو جائے گا اور صرف فون + پاس ورڈ سے لاگ ان ہوگا۔",
     setup_create: "اونر اکاؤنٹ بنائیں",
     login_title: "اونر / ایڈمن — لاگ ان",
     login_note: "یہ ڈیش بورڈ صرف اونر ایڈمن اکاؤنٹ کھول سکتا ہے۔",
@@ -225,7 +225,7 @@ const STRINGS = {
     back_to_app: "← چنیاں رائیڈ ایپ پر واپس",
     label_name: "اونر کا نام",
     label_phone: "ایڈمن فون",
-    label_pin: "ایک بار کا ایڈمن PIN",
+    label_pin: "ایک بار کا سیٹ اپ کوڈ",
     label_password: "ایڈمن پاس ورڈ",
     label_new_password: "نیا پاس ورڈ (کم از کم 6 حروف)",
     label_current_password: "موجودہ پاس ورڈ",
@@ -326,7 +326,7 @@ const STRINGS = {
     stat_pending_drivers: "زیر التواء ڈرائیورز",
     stat_rev_today: "آج کی آمدنی",
     stat_rev_7d: "7 دن کی آمدنی",
-    err_setup_fields: "فون، PIN اور نیا پاس ورڈ ضروری ہیں۔",
+    err_setup_fields: "فون، سیٹ اپ کوڈ اور نیا پاس ورڈ ضروری ہیں۔",
     err_login_fields: "فون اور پاس ورڈ ضروری ہیں۔",
     err_pw_fields: "موجودہ اور نیا پاس ورڈ دونوں ضروری ہیں۔",
     err_ledger_id: "ڈرائیور یوزر ID لکھیں۔",
@@ -335,7 +335,7 @@ const STRINGS = {
     err_not_available: "یہ ڈیٹا ابھی دستیاب نہیں — سرور کا اینڈ پوائنٹ ابھی لائیو نہیں۔",
     err_load: "یہ سیکشن لوڈ نہیں ہو سکا۔ دوبارہ کوشش کریں۔",
     err_session: "آپ کا سیشن ختم ہو گیا — دوبارہ لاگ ان کریں۔",
-    toast_setup_done: "اونر اکاؤنٹ بن گیا۔ PIN دوبارہ کام نہیں کرے گا — اب سے فون + پاس ورڈ استعمال کریں۔",
+    toast_setup_done: "اونر اکاؤنٹ بن گیا۔ سیٹ اپ کوڈ دوبارہ کام نہیں کرے گا — اب سے فون + پاس ورڈ استعمال کریں۔",
     toast_login: "ایڈمن کھل گیا۔",
     toast_saved: "سیٹنگز محفوظ — نئے کرائے فوراً لاگو۔",
     toast_pw_changed: "پاس ورڈ بدل گیا۔",
@@ -482,13 +482,17 @@ function applyLang() {
     const key = el.getAttribute("data-i18n");
     if (STRINGS[lang][key] != null) el.textContent = t(key);
   });
-  $("lang-toggle").textContent = lang === "ur" ? "English" : "اردو";
+  document.querySelectorAll(".lang-opt").forEach((el) => {
+    el.classList.toggle("active", el.dataset.lang === lang);
+    el.setAttribute("aria-pressed", el.dataset.lang === lang ? "true" : "false");
+  });
   localStorage.setItem("cr_lang", lang);
   // Re-render the visible section so dynamic strings switch too.
   if (store.admin) loadSection(currentSection, true);
 }
-function toggleLang() {
-  lang = lang === "ur" ? "en" : "ur";
+function setLang(l) {
+  if (l !== "en" && l !== "ur") return;
+  lang = l;
   applyLang();
 }
 
@@ -997,7 +1001,7 @@ async function disableDemo(btn) {
 document.querySelectorAll(".nav-btn").forEach((b) => b.addEventListener("click", () => showSection(b.dataset.section)));
 $("section-picker").addEventListener("change", (e) => showSection(e.target.value));
 document.querySelectorAll("[data-refresh]").forEach((b) => b.addEventListener("click", () => loadSection(b.dataset.refresh)));
-$("lang-toggle").addEventListener("click", toggleLang);
+document.querySelectorAll(".lang-opt").forEach((el) => el.addEventListener("click", () => setLang(el.dataset.lang)));
 $("logout-btn").addEventListener("click", doLogout);
 $("logout-btn-2").addEventListener("click", doLogout);
 $("setup-btn").addEventListener("click", (e) => doSetup(e.currentTarget));

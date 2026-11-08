@@ -30,6 +30,12 @@ function startServer() {
 function stopServer() {
   if (child) { child.kill(); child = null; }
 }
+// The one-time setup code is printed ONCE to server stdout on first boot
+// (and never again while its hash is stored). Extract it from captured logs.
+function extractSetupToken(out) {
+  const m = out.match(/ONE-TIME ADMIN SETUP CODE: ([0-9a-f]{64})/);
+  return m ? m[1] : null;
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -107,15 +113,29 @@ async function main() {
   await expectFail("unauthenticated admin rides -> 401", () => call("/api/admin/rides"), 401);
   await expectFail("signup without password -> 400", () => call("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "No Pass", phone: "0309-1111111", role: "rider" }) }), 400);
 
-  // ---- Admin bootstrap: PIN works once, then dies ----
+  // ---- Admin bootstrap: one-time setup token (v2.0 — the fixed PIN is gone) ----
   const setupNeeded = await call("/api/admin/setup-needed");
   check("admin setup needed on fresh DB", setupNeeded.setup_needed === true);
-  await expectFail("admin setup with wrong PIN -> 401", () => call("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: "0000", name: "Owner", phone: "03266040350", password: "ownerpass" }) }), 401);
-  const setup = await callRaw("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: "1234", name: "Owner", phone: "03266040350", password: "ownerpass" }) });
-  check("admin setup with PIN creates owner", setup.status === 200 && setup.data.admin && setup.data.admin.role === "owner", JSON.stringify(setup.data));
+  // The token is generated once on first boot and logged to stdout.
+  const setupToken = extractSetupToken(serverOut);
+  check("one-time setup token generated + logged on first boot (64 hex chars)", typeof setupToken === "string" && /^[0-9a-f]{64}$/.test(setupToken || ""));
+  check("no ADMIN_PIN / fixed PIN anywhere in boot log", !/ADMIN_PIN|1234/.test(serverOut.replace(/ONE-TIME ADMIN SETUP CODE: [0-9a-f]{64}/, "")));
+  await expectFail("admin setup with wrong token -> 401", () => call("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: "00".repeat(32), name: "Owner", phone: "03266040350", password: "ownerpass" }) }), 401);
+  await expectFail("admin setup with old fixed PIN 1234 -> 401", () => call("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: "1234", name: "Owner", phone: "03266040350", password: "ownerpass" }) }), 401);
+  // Restart BEFORE setup: the stored token hash must survive a restart —
+  // no new token may be generated, and the original token must still work.
+  stopServer();
+  await sleep(500);
+  startServer();
+  await waitForHealth();
+  check("restart before setup generates NO new token (hash persisted)", extractSetupToken(serverOut) === null, serverOut.slice(0, 200));
+  check("setup still needed after restart", (await call("/api/admin/setup-needed")).setup_needed === true);
+  const setup = await callRaw("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: setupToken, name: "Owner", phone: "03266040350", password: "ownerpass" }) });
+  check("admin setup with one-time token creates owner", setup.status === 200 && setup.data.admin && setup.data.admin.role === "owner", JSON.stringify(setup.data));
   saveCookie("admin", setup.setCookie);
   check("admin setup-needed now false", (await call("/api/admin/setup-needed")).setup_needed === false);
-  await expectFail("second admin setup -> 400 (PIN dead)", () => call("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: "1234", name: "Owner2", phone: "03266040351", password: "ownerpass" }) }), 400);
+  await expectFail("second admin setup -> 400 (token dead after use)", () => call("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: setupToken, name: "Owner2", phone: "03266040351", password: "ownerpass" }) }), 400);
+  await expectFail("setup with a used token -> 400 (admin exists)", () => call("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: setupToken, name: "Owner2", phone: "03266040351", password: "ownerpass" }) }), 400);
   const adminLoginBad = await callRaw("/api/admin/login", { method: "POST", body: JSON.stringify({ phone: "03266040350", password: "wrongpass" }) });
   check("admin login with wrong password -> 401", adminLoginBad.status === 401);
   // Login rate limit (dummy phone — the real admin phone stays usable).
@@ -319,7 +339,7 @@ async function main() {
   await expectFail("city with invalid lat/lng -> 400", () => call("/api/admin/cities", { method: "POST", body: JSON.stringify({ name: "Bad City", lat: "xx", lng: 74.2 }), session: "admin" }), 400);
   await expectFail("rider cannot create a city -> 403", () => call("/api/admin/cities", { method: "POST", body: JSON.stringify({ name: "Nope City", lat: 31, lng: 74 }), session: "rider" }), 403);
 
-  // Admin PIN is dead — the old header no longer works.
+  // The fixed PIN is dead — the old header no longer works.
   await expectFail("old X-Admin-Pin header no longer grants admin -> 401", () => fetch(BASE + "/api/admin/rides", { headers: { "X-Admin-Pin": "1234" } }).then(async (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }), 401);
 
   // Seed data present.
@@ -363,6 +383,44 @@ async function main() {
   check("earnings include tips Rs 50, driver kept +Rs 50", earn2.tips === 50 && earn2.driver_kept === 1658 + 50, JSON.stringify(earn2));
   const hist2 = await call(`/api/rides?rider_id=${rider.id}`, { session: "rider" });
   check("rider history shows the tip on the completed ride", hist2.rides.some((r) => r.id === ride.ride_id && r.tip_amount === 50));
+
+  // ---- Setup rate limit (separate fresh-DB server, port 3457) ----
+  // 5 wrong setup codes -> 401 each; 6th rapid attempt -> 429; even the
+  // correct code is then blocked until the 15-minute window passes.
+  {
+    const rateDb = path.join(dataDir, "smoke-rate.db");
+    if (fs.existsSync(rateDb)) fs.unlinkSync(rateDb);
+    const rateEnv = { ...process.env, PORT: "3457", TURSO_DATABASE_URL: "file:./data/smoke-rate.db" };
+    const rateChild = spawn("node", ["server/index.mjs"], { cwd: root, env: rateEnv, stdio: ["ignore", "pipe", "pipe"] });
+    let rateOut = "";
+    rateChild.stdout.on("data", (d) => (rateOut += d));
+    rateChild.stderr.on("data", (d) => (rateOut += d));
+    const rateBase = "http://127.0.0.1:3457";
+    try {
+      for (let i = 0; i < 40; i++) {
+        try { const r = await fetch(rateBase + "/api/health"); if (r.ok) break; } catch {}
+        await sleep(500);
+      }
+      const rateToken = extractSetupToken(rateOut);
+      check("rate-limit server generated its own setup token", typeof rateToken === "string" && /^[0-9a-f]{64}$/.test(rateToken || ""));
+      const rateCall = async (pin) => {
+        const r = await fetch(rateBase + "/api/admin/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin, name: "Owner", phone: "03266040350", password: "ownerpass" }) });
+        return r.status;
+      };
+      let statuses = [];
+      for (let i = 0; i < 5; i++) statuses.push(await rateCall("11".repeat(32)));
+      check("5 wrong setup codes -> 401 each", statuses.every((x) => x === 401), statuses.join(","));
+      const sixth = await rateCall("22".repeat(32));
+      check("6th rapid wrong setup code -> 429 rate limit", sixth === 429, `got ${sixth}`);
+      const blockedReal = await rateCall(rateToken);
+      check("correct token also blocked while rate-limited -> 429", blockedReal === 429, `got ${blockedReal}`);
+    } finally {
+      rateChild.kill();
+      await sleep(300);
+      if (fs.existsSync(rateDb)) fs.unlinkSync(rateDb);
+      if (fs.existsSync(rateDb + "-journal")) fs.unlinkSync(rateDb + "-journal");
+    }
+  }
 
   // Static pages.
   const page = await fetch(BASE + "/");

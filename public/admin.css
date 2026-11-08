@@ -70,6 +70,20 @@ button.small { min-height: 36px; padding: 6px 12px; font-size: 13px; border-radi
 button:disabled { opacity: .55; cursor: wait; }
 button.ghost { background: transparent; border-color: rgba(255,255,255,.4); color: #fff; min-height: 38px; padding: 6px 12px; }
 button.ghost:hover { border-color: #fff; }
+/* Segmented EN | اردو control (dark topbar variant) — both languages
+   always visible, the active one highlighted. */
+.lang-switch {
+  display: inline-flex; border: 1.5px solid rgba(255,255,255,.4); border-radius: 999px;
+  overflow: hidden; background: transparent; flex: none;
+}
+.lang-switch .lang-opt {
+  border: none; background: transparent; color: #fff;
+  font-size: 13.5px; font-weight: 800; padding: 7px 13px; margin: 0;
+  min-height: 36px; border-radius: 0;
+  font-family: "Noto Naskh Arabic", Inter, system-ui, sans-serif;
+}
+.lang-switch .lang-opt.active { background: var(--blue); color: #fff; }
+.lang-switch .lang-opt + .lang-opt { border-left: 1px solid rgba(255,255,255,.4); }
 input, select {
   font: inherit; width: 100%;
   border: 1px solid var(--line); border-radius: 10px;

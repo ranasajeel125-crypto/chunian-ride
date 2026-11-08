@@ -8,7 +8,7 @@
 <meta name="description" content="Chunian Ride driver app — go online, take ride requests, earn. Cash payment, prepaid wallet top-up.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=5">
+<link rel="stylesheet" href="/style.css?v=6">
 <link rel="icon" type="image/png" href="/favicon.png">
 </head>
 <body>
@@ -22,7 +22,10 @@
       </div>
     </a>
     <div class="header-actions">
-      <button class="lang-toggle" type="button" aria-label="Switch language">اردو</button>
+      <div class="lang-switch" role="group" aria-label="Language / زبان">
+        <button type="button" class="lang-opt" data-lang="en">EN</button>
+        <button type="button" class="lang-opt" data-lang="ur">اردو</button>
+      </div>
       <div class="emergency">
         <a href="tel:15">🚨 Police 15</a>
         <a href="tel:1122">⛑️ 1122</a>
@@ -44,7 +47,7 @@
       <p class="eyebrow">Driver</p>
       <h2 data-i18n="login_title">Login</h2>
       <p class="card-sub" data-i18n="driver_login_sub">Login with your driver phone + password.</p>
-      <input id="driver-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03001234567" inputmode="tel" autocomplete="tel">
+      <input id="driver-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03XX-XXXXXXX" inputmode="tel" autocomplete="tel">
       <input id="driver-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)" autocomplete="current-password">
       <p class="form-err" id="auth-err" role="alert"></p>
       <button class="primary" id="btn-driver-login" data-i18n="btn_login">Login</button>
@@ -124,7 +127,10 @@
       <h2 data-i18n="driver_details">Driver &amp; vehicle details</h2>
       <div id="driver-profile-info"></div>
       <h3 data-i18n="language">Language</h3>
-      <button class="lang-toggle" type="button">اردو</button>
+      <div class="lang-switch" role="group" aria-label="Language / زبان">
+        <button type="button" class="lang-opt" data-lang="en">EN</button>
+        <button type="button" class="lang-opt" data-lang="ur">اردو</button>
+      </div>
       <h3 data-i18n="change_pw">Change password</h3>
       <input id="pw-current" type="password" data-i18n-ph="current_pw_ph" placeholder="Current password" autocomplete="current-password">
       <input id="pw-new" type="password" data-i18n-ph="new_pw_ph" placeholder="New password (at least 6 characters)" autocomplete="new-password">
@@ -140,7 +146,7 @@
       <h2 data-i18n="register_title">Driver registration — new driver</h2>
       <p class="card-sub" data-i18n="register_sub">CNIC, driving licence and vehicle registration are required. The owner will approve.</p>
       <input id="reg-name" data-i18n-ph="name_ph" placeholder="Your name">
-      <input id="reg-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03001234567" inputmode="tel">
+      <input id="reg-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03XX-XXXXXXX" inputmode="tel">
       <input id="reg-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)">
       <select id="reg-vehicle">
         <option value="bike" data-i18n="bike">Bike</option>
@@ -172,8 +178,8 @@
   <button class="nav-btn" data-screen="profile">👤<span data-i18n="nav_profile">Profile</span></button>
 </nav>
 
-<script src="/shared.js?v=5"></script>
-<script src="/driver.js?v=5"></script>
+<script src="/shared.js?v=6"></script>
+<script src="/driver.js?v=6"></script>
 <script>
   $("btn-driver-login").addEventListener("click", (e) => driverLogin(e.currentTarget));
   $("online-btn").addEventListener("click", (e) => toggleOnline(e.currentTarget));

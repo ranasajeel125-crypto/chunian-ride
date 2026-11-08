@@ -8,7 +8,7 @@
 <meta name="description" content="Chunian Ride owner admin dashboard — rides, drivers, top-ups, wallets, promo codes, cities and settings.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/admin.css">
+<link rel="stylesheet" href="/admin.css?v=6">
 <link rel="icon" type="image/png" href="/favicon.png">
 </head>
 <body>
@@ -21,7 +21,10 @@
     </div>
   </div>
   <span class="who hidden" id="admin-who"></span>
-  <button class="ghost" id="lang-toggle" type="button">اردو</button>
+  <div class="lang-switch lang-switch-dark" role="group" aria-label="Language / زبان">
+    <button type="button" class="lang-opt" data-lang="en">EN</button>
+    <button type="button" class="lang-opt" data-lang="ur">اردو</button>
+  </div>
   <button class="ghost hidden" id="logout-btn" type="button" data-i18n="logout">Logout</button>
 </header>
 
@@ -29,12 +32,12 @@
 <div id="view-setup" class="auth-wrap hidden">
   <div class="auth-card">
     <h1 data-i18n="setup_title">Owner account — first-time setup</h1>
-    <p class="muted" data-i18n="setup_note">This PIN works only once, to create the first owner account. After this, the PIN stops working and only phone + password login works.</p>
+    <p class="muted" data-i18n="setup_note">This one-time setup code works only once, to create the first owner account. Find it in the Render logs (search "ONE-TIME ADMIN SETUP CODE"). After this, the code stops working and only phone + password login works.</p>
     <label for="setup-name" data-i18n="label_name">Owner name</label>
     <input id="setup-name" autocomplete="name">
     <label for="setup-phone" data-i18n="label_phone">Owner phone</label>
     <input id="setup-phone" inputmode="tel" autocomplete="tel">
-    <label for="setup-pin" data-i18n="label_pin">One-time Admin PIN</label>
+    <label for="setup-pin" data-i18n="label_pin">One-time setup code</label>
     <input id="setup-pin" type="password" autocomplete="off">
     <label for="setup-password" data-i18n="label_new_password">New admin password (at least 6 characters)</label>
     <input id="setup-password" type="password" autocomplete="new-password">
@@ -303,6 +306,6 @@
 </div>
 
 <div id="toasts" aria-live="polite"></div>
-<script src="/admin.js"></script>
+<script src="/admin.js?v=6"></script>
 </body>
 </html>

@@ -10,12 +10,15 @@
 //   verified by the owner at document approval.
 // - Top-ups are PENDING until the owner verifies the TID and approves.
 //   A fake TID buys nothing (G2 fix).
-// - Admin = password-protected accounts, not a shared PIN. The old ADMIN_PIN
-//   is only a one-time bootstrap key to create the first admin account.
+// - Admin = password-protected accounts, not a shared PIN. The old
+//   ADMIN_PIN bootstrap is gone (v2.0): first-admin setup uses a random
+//   one-time token whose SHA-256 hash is stored in settings; the token is
+//   printed once to stdout (Render logs) and deleted after use.
 // - Ride status history + audit log for admin actions and wallet changes.
 // - All money movements run inside transactions (no double-credit, no
 //   double ride completion).
 import express from "express";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -52,6 +55,9 @@ import {
   loginRateLimit,
   loginFailed,
   loginSucceeded,
+  setupRateLimit,
+  setupFailed,
+  setupSucceeded,
 } from "./auth.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,9 +65,23 @@ const root = path.join(__dirname, "..");
 const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
-const ADMIN_PIN = process.env.ADMIN_PIN || "1234";
+// NOTE: the old ADMIN_PIN env var is IGNORED completely since v2.0 — the
+// fixed 4-digit bootstrap PIN is gone (it was brute-forceable: public
+// endpoint, no rate limit). If ADMIN_PIN still exists in the Render
+// dashboard it is inert and should be deleted by the owner. First-admin
+// setup now uses a random one-time token (see ensureSetupToken below).
 
 app.use(express.json());
+// HTML pages must never be served stale from a cache: the v1 page a user
+// cached kept showing after the redesign (no "Version 1" text exists in
+// current code). no-store on every HTML/extensionless route; versioned
+// (?v=6) JS/CSS bust asset caches instead.
+app.use((req, res, next) => {
+  if (req.path === "/" || req.path.endsWith(".html") || !path.extname(req.path)) {
+    res.set("Cache-Control", "no-store");
+  }
+  next();
+});
 app.use(express.static(path.join(root, "public")));
 app.use(attachAuth);
 
@@ -101,7 +121,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "1.0.0", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.0.0", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 app.get("/api/places", async (req, res) => {
@@ -236,20 +256,72 @@ app.post("/api/auth/change-password", requireAuth, async (req, res) => {
 });
 
 // ---- Admin bootstrap + login ----
+// ONE-TIME SETUP TOKEN (v2.0, replaces the fixed ADMIN_PIN "1234").
+// - The token is a cryptographically random 64-hex-char string, generated
+//   ONCE on first boot when no admin exists and no token hash is stored.
+// - ONLY its SHA-256 hash is stored (settings key admin_setup_token_hash).
+//   The token itself is NEVER written to any file, DB row, commit or API
+//   response — it is printed exactly once to stdout (Render logs) so the
+//   owner can copy it from there.
+// - On later boots/restarts the stored hash is REUSED: no new token is
+//   generated while a hash exists, so the token survives Render free-tier
+//   sleep/wake cycles until it is used.
+// - After a successful setup the hash is DELETED; the token stops working
+//   and only phone + password admin login works.
+// - RECOVERY if the token is lost from the logs: delete the stored hash
+//   (Turso dashboard SQL: DELETE FROM settings WHERE key =
+//   'admin_setup_token_hash';), then restart/redeploy the service — a fresh
+//   token is generated and logged. Never share the token in chat/screenshots.
+const SETUP_TOKEN_HASH_KEY = "admin_setup_token_hash";
+function hashSetupToken(token) {
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+async function ensureSetupToken() {
+  const admins = await client.execute("SELECT COUNT(*) AS n FROM admins");
+  if (Number(admins.rows[0].n) > 0) {
+    // An admin already exists: any leftover token hash is dead weight —
+    // remove it so no stale bootstrap credential lingers.
+    await client.execute({ sql: "DELETE FROM settings WHERE key = ?", args: [SETUP_TOKEN_HASH_KEY] });
+    return null;
+  }
+  const existing = await client.execute({ sql: "SELECT value FROM settings WHERE key = ?", args: [SETUP_TOKEN_HASH_KEY] });
+  if (existing.rows.length) return null; // token already issued — survives restarts
+  const token = crypto.randomBytes(32).toString("hex"); // 64 chars, 256-bit
+  await client.execute({
+    sql: "INSERT INTO settings(key, value) VALUES (?, ?)",
+    args: [SETUP_TOKEN_HASH_KEY, hashSetupToken(token)],
+  });
+  // THE ONLY place the token ever appears. Owner-only: find it in the
+  // Render dashboard -> chunian-ride service -> Logs, searching for
+  // "ONE-TIME ADMIN SETUP CODE".
+  console.log(`[chunian-ride] ONE-TIME ADMIN SETUP CODE: ${token} — use it once in /admin setup (field "One-time setup code"), then it stops working. Do NOT share it.`);
+  return token;
+}
+async function verifySetupToken(pin) {
+  const row = await client.execute({ sql: "SELECT value FROM settings WHERE key = ?", args: [SETUP_TOKEN_HASH_KEY] });
+  if (!row.rows.length) return false;
+  const stored = Buffer.from(String(row.rows[0].value), "utf8");
+  const given = Buffer.from(hashSetupToken(pin || ""), "utf8");
+  if (stored.length !== given.length) return false;
+  return crypto.timingSafeEqual(stored, given);
+}
+
 // Does an admin account exist yet? (Public — only reveals existence.)
 app.get("/api/admin/setup-needed", async (req, res) => {
   const c = await client.execute("SELECT COUNT(*) AS n FROM admins");
   res.json({ setup_needed: Number(c.rows[0].n) === 0 });
 });
 
-// One-time owner setup: the current ADMIN_PIN is the bootstrap key. It works
-// ONLY while no admin account exists; after that the PIN is dead and only
-// phone + password logins work.
-app.post("/api/admin/setup", async (req, res) => {
+// One-time owner setup: the one-time setup code (printed once in the
+// Render logs on first boot) is the bootstrap key. It works ONLY while no
+// admin account exists AND the stored token hash has not been used; after
+// that the code is dead and only phone + password logins work.
+// Rate-limited: 5 wrong codes / 15 min per IP -> 429.
+app.post("/api/admin/setup", setupRateLimit, async (req, res) => {
   const { pin, name, phone, password } = req.body || {};
   const c = await client.execute("SELECT COUNT(*) AS n FROM admins");
   if (Number(c.rows[0].n) > 0) return res.status(400).json({ error: "Admin account pehle se bana hua hai — login karein" });
-  if (String(pin || "") !== ADMIN_PIN) return res.status(401).json({ error: "PIN ghalat hai" });
+  if (!(await verifySetupToken(pin))) { setupFailed(req); return res.status(401).json({ error: "Setup code ghalat hai" }); }
   if (!phone) return res.status(400).json({ error: "phone is required" });
   const pwError = validatePassword(password);
   if (pwError) return res.status(400).json({ error: pwError });
@@ -258,10 +330,13 @@ app.post("/api/admin/setup", async (req, res) => {
     sql: "INSERT INTO admins(name, phone, password_hash, role, created_at) VALUES (?, ?, ?, 'owner', ?)",
     args: [String(name || "Owner").trim(), normalizePhone(phone), hash, now()],
   });
+  // The one-time code dies with its first successful use.
+  await client.execute({ sql: "DELETE FROM settings WHERE key = ?", args: [SETUP_TOKEN_HASH_KEY] });
+  setupSucceeded(req);
   const adminId = Number(r.lastInsertRowid);
   const sessionId = await createSession("admin", adminId, req.headers["user-agent"]);
   setSessionCookie(res, req, sessionId);
-  res.json({ admin: { id: adminId, name: String(name || "Owner").trim(), phone: normalizePhone(phone), role: "owner" }, message: "Owner account ban gaya — ab se PIN kaam nahi karega, sirf phone + password login hoga." });
+  res.json({ admin: { id: adminId, name: String(name || "Owner").trim(), phone: normalizePhone(phone), role: "owner" }, message: "Owner account ban gaya — ab se setup code kaam nahi karega, sirf phone + password login hoga." });
 });
 
 app.post("/api/admin/login", loginRateLimit, async (req, res) => {
@@ -1103,6 +1178,7 @@ app.use((err, req, res, next) => {
 });
 
 initDb()
+  .then(() => ensureSetupToken())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[chunian-ride] listening on ${PORT} (db: ${usingTurso ? "turso" : "local-sqlite"})`);

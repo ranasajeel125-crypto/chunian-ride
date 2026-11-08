@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=5">
+<link rel="stylesheet" href="/style.css?v=6">
 <link rel="icon" type="image/png" href="/favicon.png">
 </head>
 <body class="landing">
@@ -23,7 +23,10 @@
       </div>
     </div>
     <div class="header-actions">
-      <button class="lang-toggle" type="button" aria-label="Switch language">اردو</button>
+      <div class="lang-switch" role="group" aria-label="Language / زبان">
+        <button type="button" class="lang-opt" data-lang="en">EN</button>
+        <button type="button" class="lang-opt" data-lang="ur">اردو</button>
+      </div>
       <div class="emergency">
         <a href="tel:15">🚨 Police 15</a>
         <a href="tel:1122">⛑️ 1122</a>
@@ -58,6 +61,12 @@
 
   <p class="owner-link"><a href="/admin" data-i18n="owner_admin">Owner / Admin</a></p>
 
+  <div class="card rates-card" id="rates-card">
+    <p class="eyebrow" data-i18n="rates_title">Our rates — live fares</p>
+    <p class="card-sub" data-i18n="rates_note">Per-km rate with minimum fare. The rider can offer a fare — the driver can accept or counter-offer.</p>
+    <div class="rates-grid" id="rates-list"><p class="muted" data-i18n="rates_loading">Loading rates…</p></div>
+  </div>
+
   <div class="card sos-card">
     <p class="eyebrow" data-i18n="emergency">Emergency</p>
     <p><span data-i18n="police">Police 15</span>: <a href="tel:15"><strong>15</strong></a> &nbsp;•&nbsp; <span data-i18n="rescue">Rescue 1122</span>: <a href="tel:1122"><strong>1122</strong></a></p>
@@ -68,12 +77,34 @@
   <p data-i18n="footer_about">Chunian Ride — inDrive-style ride booking for Chunian, Tehsil Chunian, District Kasur. Bike, rickshaw, car and AC car. Cash payment, negotiated fares.</p>
   <p data-i18n="footer_note">Uber stopped in Pakistan on 30 Apr 2024 and Careem ride-hailing on 18 Jul 2025 — this is a local inDrive-style service.</p>
   <p data-i18n="emergency">Emergency: Police 15 • Rescue 1122</p>
+  <p class="version-marker">Chunian Ride v2.0</p>
 </footer>
 
-<script src="/shared.js?v=5"></script>
+<script src="/shared.js?v=6"></script>
 <script>
+  const RATE_VEHICLES = [
+    { key: "bike", ico: "🏍️" }, { key: "rickshaw", ico: "🛺" },
+    { key: "car", ico: "🚗" }, { key: "ac_car", ico: "❄️🚗" },
+  ];
+  async function renderRates() {
+    const box = document.getElementById("rates-list");
+    if (!box) return;
+    try {
+      const d = await api("/api/settings");
+      const s = d.settings || {};
+      box.innerHTML = RATE_VEHICLES.map((v) => {
+        const rate = Number(s["rate_" + v.key + "_per_km"] || 0);
+        const min = Number(s["min_" + v.key] || 0);
+        return `<div class="rate-row"><span class="rate-ico">${v.ico}</span><span class="rate-name">${t(v.key)}</span><span class="rate-val">${t("per_km", { rate })} · ${t("min_fare", { min })}</span></div>`;
+      }).join("");
+    } catch (e) {
+      box.innerHTML = `<p class="muted">${t("rates_loading")}</p>`;
+    }
+  }
+  window.onLangChange = renderRates;
   initLangToggle();
   applyI18n();
+  renderRates();
 </script>
 </body>
 </html>

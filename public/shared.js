@@ -19,7 +19,7 @@ const STRINGS = {
     login_title: "Login", signup_title: "Login / Signup",
     rider_login_sub: "Login with phone + password. First time? Enter your name + phone + password — your account will be created.",
     driver_login_sub: "Login with your driver phone + password.",
-    name_ph: "Your name", phone_ph: "Phone — e.g. 03001234567", password_ph: "Password (at least 6 characters)",
+    name_ph: "Your name", phone_ph: "Phone — e.g. 03XX-XXXXXXX", password_ph: "Password (at least 6 characters)",
     btn_signup: "Sign up", btn_login: "Login", btn_logout: "Logout",
     err_name_phone_pw: "Please enter your name, phone and password.",
     err_phone_pw: "Please enter your phone and password.",
@@ -78,6 +78,8 @@ const STRINGS = {
     support: "Support", police: "Police 15", rescue: "Rescue 1122",
     support_owner: "Owner support", not_set: "Not set",
     language: "Language",
+    rates_title: "Our rates — live fares", rates_note: "Per-km rate with minimum fare. The rider can offer a fare — the driver can accept or counter-offer.",
+    rates_loading: "Loading rates…",
     // Driver
     driver_home: "Driver dashboard", status_card: "Your status",
     online: "Online", offline: "Offline", go_online: "Go Online", go_offline: "Go Offline",
@@ -131,7 +133,7 @@ const STRINGS = {
     login_title: "لاگ ان", signup_title: "لاگ ان / سائن اپ",
     rider_login_sub: "فون + پاس ورڈ سے لاگ ان کریں۔ پہلی بار؟ نام + فون + پاس ورڈ لکھیں — آپ کا اکاؤنٹ بن جائے گا۔",
     driver_login_sub: "اپنے ڈرائیور فون + پاس ورڈ سے لاگ ان کریں۔",
-    name_ph: "آپ کا نام", phone_ph: "فون — مثلاً 03001234567", password_ph: "پاس ورڈ (کم از کم 6 حروف)",
+    name_ph: "آپ کا نام", phone_ph: "فون — مثلاً 03XX-XXXXXXX", password_ph: "پاس ورڈ (کم از کم 6 حروف)",
     btn_signup: "سائن اپ", btn_login: "لاگ ان", btn_logout: "لاگ آؤٹ",
     err_name_phone_pw: "براہ کرم نام، فون اور پاس ورڈ تینوں لکھیں۔",
     err_phone_pw: "براہ کرم فون اور پاس ورڈ لکھیں۔",
@@ -190,6 +192,8 @@ const STRINGS = {
     support: "مدد", police: "پولیس 15", rescue: "ریسکیو 1122",
     support_owner: "مالک سے رابطہ", not_set: "سیٹ نہیں ہے",
     language: "زبان",
+    rates_title: "ہمارے کرایے — لائیو ریٹ", rates_note: "فی کلومیٹر ریٹ اور کم از کم کرایہ۔ رائیڈر اپنا کرایہ بتا سکتا ہے — ڈرائیور قبول کر سکتا ہے یا جوابی پیشکش دے سکتا ہے۔",
+    rates_loading: "کرایے لوڈ ہو رہے ہیں…",
     driver_home: "ڈرائیور ڈیش بورڈ", status_card: "آپ کی حالت",
     online: "آن لائن", offline: "آف لائن", go_online: "آن لائن ہوں", go_offline: "آف لائن ہوں",
     loc_sharing: "📍 لائیو لوکیشن شیئر ہو رہی ہے",
@@ -247,10 +251,17 @@ function setLang(l) {
 function applyI18n() {
   $$("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
   $$("[data-i18n-ph]").forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
+  // Segmented EN | اردو control: mark the active language, never hide the
+  // other one — the old single "اردو" button was too easy to miss.
+  $$(".lang-opt").forEach((el) => {
+    el.classList.toggle("active", el.dataset.lang === LANG);
+    el.setAttribute("aria-pressed", el.dataset.lang === LANG ? "true" : "false");
+  });
   $$(".lang-toggle").forEach((el) => { el.textContent = t("lang_toggle"); });
   if (typeof onLangChange === "function") onLangChange();
 }
 function initLangToggle() {
+  $$(".lang-opt").forEach((el) => el.addEventListener("click", () => setLang(el.dataset.lang)));
   $$(".lang-toggle").forEach((el) => el.addEventListener("click", () => setLang(LANG === "en" ? "ur" : "en")));
   document.documentElement.lang = LANG === "ur" ? "ur" : "en";
 }
@@ -293,7 +304,7 @@ const ERR_MAP = {
   "Ye kaam sirf usi user ka hai": { en: "This is only for that user.", ur: "یہ کام صرف اسی صارف کا ہے۔" },
   "Bohat zyada ghalat koshishein — 15 minute baad dobara koshish karein": { en: "Too many wrong attempts — try again after 15 minutes.", ur: "بہت زیادہ غلط کوششیں — 15 منٹ بعد دوبارہ کوشش کریں۔" },
   "Phone ya password ghalat hai": { en: "Phone or password is wrong.", ur: "فون یا پاس ورڈ غلط ہے۔" },
-  "PIN ghalat hai": { en: "The PIN is wrong.", ur: "پن غلط ہے۔" },
+  "Setup code ghalat hai": { en: "The setup code is wrong.", ur: "سیٹ اپ کوڈ غلط ہے۔" },
   "Ye account suspend hai — owner se rabta karein": { en: "This account is suspended — contact the owner.", ur: "یہ اکاؤنٹ معطل ہے — مالک سے رابطہ کریں۔" },
   "Is account ka password abhi set nahi — owner se rabta karein": { en: "No password is set on this account yet — contact the owner.", ur: "اس اکاؤنٹ کا پاس ورڈ ابھی سیٹ نہیں — مالک سے رابطہ کریں۔" },
   "Admin account pehle se bana hua hai — login karein": { en: "An admin account already exists — please log in.", ur: "ایڈمن اکاؤنٹ پہلے سے بنا ہوا ہے — براہ کرم لاگ ان کریں۔" },
