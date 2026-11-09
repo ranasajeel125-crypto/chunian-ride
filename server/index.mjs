@@ -37,6 +37,13 @@ import {
   adjustWallet,
   approveTopup,
   rejectTopup,
+  notify,
+  notifyAdmins,
+  validatePromo,
+  promoDiscount,
+  approveWithdrawal,
+  rejectWithdrawal,
+  createRefund,
 } from "./db.mjs";
 import {
   hashPassword,
@@ -71,7 +78,10 @@ const PORT = process.env.PORT || 3000;
 // dashboard it is inert and should be deleted by the owner. First-admin
 // setup now uses a random one-time token (see ensureSetupToken below).
 
-app.use(express.json());
+// JSON body limit 3 MB: document photo uploads are base64 data URLs up
+// to ~2.1 MB (the server's own cap returns 400 above that). The default
+// 100 kb limit would reject a legit upload with a 500 instead.
+app.use(express.json({ limit: "3mb" }));
 // HTML pages must never be served stale from a cache: the v1 page a user
 // cached kept showing after the redesign (no "Version 1" text exists in
 // current code). no-store on every HTML/extensionless route; versioned
@@ -121,7 +131,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "2.0.0", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.1.0", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 app.get("/api/places", async (req, res) => {
@@ -134,8 +144,10 @@ app.get("/api/settings", async (req, res) => {
 });
 
 // ---- Fare estimate (public — needed before login) ----
+// Optional promo_code: validated (active, in date range, uses left); the
+// discount lands in suggested_fare. base_fare is the undiscounted fare.
 app.post("/api/fare", async (req, res) => {
-  const { pickup, destination, vehicle, distance_km } = req.body || {};
+  const { pickup, destination, vehicle, distance_km, promo_code } = req.body || {};
   if (!VEHICLES.includes(vehicle)) return res.status(400).json({ error: "vehicle must be bike, rickshaw, car or ac_car" });
   let km = num(distance_km, 0);
   let estimated = false;
@@ -146,8 +158,18 @@ app.post("/api/fare", async (req, res) => {
     estimated = d.estimated;
   }
   const s = await getSettings();
-  const suggested = fareFor(s, vehicle, km);
-  res.json({ pickup, destination, vehicle, distance_km: km, distance_estimated: estimated, suggested_fare: suggested, per_km: Number(s[`rate_${vehicle}_per_km`]), min_fare: Number(s[`min_${vehicle}`]) });
+  const base = fareFor(s, vehicle, km);
+  let discount = 0, promo = null;
+  if (promo_code) {
+    try {
+      promo = await validatePromo(client, promo_code);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    discount = promoDiscount(base, promo);
+  }
+  const suggested = Math.max(1, base - discount);
+  res.json({ pickup, destination, vehicle, distance_km: km, distance_estimated: estimated, suggested_fare: suggested, base_fare: base, discount_amount: discount, promo_code: promo ? promo.code : null, per_km: Number(s[`rate_${vehicle}_per_km`]), min_fare: Number(s[`min_${vehicle}`]) });
 });
 
 // ---- Auth: phone + password (free — no SMS OTP) ----
@@ -437,7 +459,7 @@ app.get("/api/drivers/:id/requests", requireAuth, requireSelfOrAdmin((req) => re
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
   const rows = await client.execute({
-    sql: `SELECT r.*, u.name AS rider_name, u.phone AS rider_phone, u.rating AS rider_rating, u.rating_count AS rider_rating_count
+    sql: `SELECT r.*, u.name AS rider_name, u.rating AS rider_rating, u.rating_count AS rider_rating_count
           FROM rides r JOIN users u ON u.id = r.rider_id
           WHERE r.status = 'requested' AND r.vehicle_type = ?
           ORDER BY r.created_at DESC`,
@@ -446,28 +468,50 @@ app.get("/api/drivers/:id/requests", requireAuth, requireSelfOrAdmin((req) => re
   res.json({ requests: rows.rows });
 });
 
+// Shared top-up request creator (driver + rider — same manual JazzCash flow).
+// Only CREATES a pending request; the wallet is credited ONLY on owner
+// approval. Notifies all admins so the request is seen in their feed.
+async function createTopupRequest(userId, userName, { amount, method, tid }) {
+  const amt = num(amount, 0);
+  const s = await getSettings();
+  const minTopup = Number(s.min_topup || 500);
+  if (amt < minTopup) throw new Error("minimum top-up not met");
+  const r = await client.execute({
+    sql: "INSERT INTO topup_requests(driver_id, amount, method, tid, note, status, created_at) VALUES (?, ?, ?, ?, 'Wallet top-up request', 'pending', ?)",
+    args: [num(userId), amt, method || "JazzCash", tid || "", now()],
+  });
+  const requestId = Number(r.lastInsertRowid);
+  await notifyAdmins(client, { type: "topup_requested", params: { name: userName || "", amount: amt, method: method || "JazzCash", tid: tid || "" } });
+  return { request_id: requestId, status: "pending", amount: amt, wallet_balance: await getWalletBalance(num(userId)) };
+}
+
 // Driver wallet top-up (JazzCash / Sadapay). G2 FIX: this only CREATES a
 // pending request. The wallet is credited ONLY when the owner verifies the
 // TID in his own JazzCash app and approves it (POST /api/admin/topups/:id/approve).
 app.post("/api/drivers/:id/topup", requireAuth, requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
   const { amount, method, tid } = req.body || {};
-  const amt = num(amount, 0);
-  const s = await getSettings();
-  const minTopup = Number(s.min_topup || 500);
-  if (amt < minTopup) return res.status(400).json({ error: `minimum top-up is Rs ${minTopup}` });
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
-  const r = await client.execute({
-    sql: "INSERT INTO topup_requests(driver_id, amount, method, tid, note, status, created_at) VALUES (?, ?, ?, ?, 'Wallet top-up request', 'pending', ?)",
-    args: [num(req.params.id), amt, method || "JazzCash", tid || "", now()],
-  });
-  res.json({
-    request_id: Number(r.lastInsertRowid),
-    status: "pending",
-    amount: amt,
-    wallet_balance: await getWalletBalance(num(req.params.id)),
-    message: "Top-up request bhej di — balance tabhi barhe ga jab owner TID verify kar ke approve karega.",
-  });
+  try {
+    const out = await createTopupRequest(num(req.params.id), req.auth.name, { amount, method, tid });
+    res.json({ ...out, message: "Top-up request bhej di — balance tabhi barhe ga jab owner TID verify kar ke approve karega." });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Unified top-up (v2.1) — any logged-in user (rider OR driver) tops up
+// their own wallet with the same manual JazzCash flow. The old
+// /api/drivers/:id/topup route above still works for drivers.
+app.post("/api/topup", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user") return res.status(403).json({ error: "Sirf user account ka top-up yahan hota hai" });
+  const { amount, method, tid } = req.body || {};
+  try {
+    const out = await createTopupRequest(req.auth.ownerId, req.auth.name, { amount, method, tid });
+    res.json({ ...out, message: "Top-up request bhej di — balance tabhi barhe ga jab owner TID verify kar ke approve karega." });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.get("/api/drivers/:id/wallet", requireAuth, requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
@@ -488,13 +532,23 @@ app.get("/api/drivers/:id/wallet", requireAuth, requireSelfOrAdmin((req) => req.
 
 // ---- Wallet (self): balance + recent transactions for the logged-in user ----
 // User sessions only — admin sessions get 403 (admins use /api/admin/wallet/:driverId).
+// v2.1: also returns the user's own top-up requests (pending + past) so the
+// rider wallet screen can show top-up status like the driver screen does.
 app.get("/api/wallet/me", requireAuth, async (req, res) => {
   if (req.auth.ownerType !== "user") return res.status(403).json({ error: "Sirf user account ka wallet yahan dikhta hai" });
   const tx = await client.execute({
     sql: "SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
     args: [req.auth.ownerId],
   });
-  res.json({ balance: await getWalletBalance(req.auth.ownerId), transactions: tx.rows });
+  const pending = await client.execute({
+    sql: "SELECT * FROM topup_requests WHERE driver_id = ? AND status = 'pending' ORDER BY created_at DESC",
+    args: [req.auth.ownerId],
+  });
+  const past = await client.execute({
+    sql: "SELECT * FROM topup_requests WHERE driver_id = ? AND status != 'pending' ORDER BY created_at DESC LIMIT 10",
+    args: [req.auth.ownerId],
+  });
+  res.json({ balance: await getWalletBalance(req.auth.ownerId), transactions: tx.rows, pending_topups: pending.rows, past_topups: past.rows });
 });
 
 app.get("/api/drivers/:id/earnings", requireAuth, requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
@@ -510,8 +564,12 @@ app.get("/api/drivers/:id/earnings", requireAuth, requireSelfOrAdmin((req) => re
 });
 
 // ---- Rides ----
+// Optional promo_code (v2.1): validated before booking; the discount lands
+// in the ride's suggested fare AND in the seeded offers, so the agreed
+// fare carries the discount. promo uses increment only on a successful
+// booking (inside the same transaction, guarded against max_uses races).
 app.post("/api/rides", requireAuth, async (req, res) => {
-  const { rider_id, pickup, destination, vehicle, proposed_fare, distance_km, scheduled_for } = req.body || {};
+  const { rider_id, pickup, destination, vehicle, proposed_fare, distance_km, scheduled_for, promo_code } = req.body || {};
   if (req.auth.ownerType !== "user" || req.auth.role !== "rider" || req.auth.ownerId !== num(rider_id)) {
     return res.status(403).json({ error: "Sirf logged-in rider apni ride book kar sakta hai" });
   }
@@ -535,17 +593,41 @@ app.post("/api/rides", requireAuth, async (req, res) => {
     estimated = d.estimated;
   }
   const s = await getSettings();
-  const suggested = fareFor(s, vehicle, km);
+  const baseSuggested = fareFor(s, vehicle, km);
+  let promo = null, discount = 0;
+  if (promo_code) {
+    try {
+      promo = await validatePromo(client, promo_code);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    discount = promoDiscount(baseSuggested, promo);
+  }
+  const suggested = Math.max(1, baseSuggested - discount);
   const proposed = Math.max(1, num(proposed_fare, suggested));
-  const rideId = await withTx(async (tx) => {
-    const r = await tx.execute({
-      sql: "INSERT INTO rides(rider_id, pickup, destination, distance_km, distance_estimated, vehicle_type, suggested_fare, proposed_fare, scheduled_for, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?)",
-      args: [num(rider_id), pickup, destination, km, estimated ? 1 : 0, vehicle, suggested, proposed, sched, now()],
+  let rideId;
+  try {
+    rideId = await withTx(async (tx) => {
+      const r = await tx.execute({
+        sql: "INSERT INTO rides(rider_id, pickup, destination, distance_km, distance_estimated, vehicle_type, suggested_fare, proposed_fare, scheduled_for, promo_code, discount_amount, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?)",
+        args: [num(rider_id), pickup, destination, km, estimated ? 1 : 0, vehicle, suggested, proposed, sched, promo ? promo.code : "", discount, now()],
+      });
+      const id = Number(r.lastInsertRowid);
+      if (promo) {
+        // Uses increment only on successful booking; the WHERE guard makes
+        // a max_uses race fail the whole booking instead of over-issuing.
+        const up = await tx.execute({
+          sql: "UPDATE promo_codes SET uses = uses + 1 WHERE id = ? AND (max_uses = 0 OR uses < max_uses)",
+          args: [promo.id],
+        });
+        if (Number(up.rowsAffected) !== 1) throw new Error("promo code has reached its maximum uses");
+      }
+      await writeRideHistory(tx, id, null, "requested", num(rider_id));
+      return id;
     });
-    const id = Number(r.lastInsertRowid);
-    await writeRideHistory(tx, id, null, "requested", num(rider_id));
-    return id;
-  });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
   // inDrive-style: every online, approved driver of this vehicle with a
   // non-negative wallet can see the request and make an offer. Seed offers
   // from them at the suggested fare (or the rider's proposal if higher).
@@ -560,7 +642,16 @@ app.post("/api/rides", requireAuth, async (req, res) => {
       args: [rideId, drv.user_id, offerFare, 5 + i * 3, now()],
     });
   }
-  res.json({ ride_id: rideId, suggested_fare: suggested, proposed_fare: proposed, scheduled_for: sched, distance_km: km, distance_estimated: estimated, offers_created: drivers.rows.length });
+  // Scheduled ride: the rider gets a confirmation, and every online approved
+  // driver of this vehicle gets a heads-up (they see it in Requests too).
+  if (sched) {
+    const when = new Date(sched).toISOString();
+    await notify(client, { userId: num(rider_id), role: "user", type: "scheduled_booked", params: { ride: rideId, when }, rideId });
+    for (const drv of drivers.rows) {
+      await notify(client, { userId: Number(drv.user_id), role: "user", type: "scheduled_request", params: { ride: rideId, pickup, destination, when }, rideId });
+    }
+  }
+  res.json({ ride_id: rideId, suggested_fare: suggested, base_fare: baseSuggested, discount_amount: discount, promo_code: promo ? promo.code : null, proposed_fare: proposed, scheduled_for: sched, distance_km: km, distance_estimated: estimated, offers_created: drivers.rows.length });
 });
 
 app.get("/api/rides/:id", requireAuth, async (req, res) => {
@@ -662,6 +753,7 @@ app.post("/api/rides/:id/offers/:offerId/accept", requireAuth, async (req, res) 
     if (e.message === "ride is no longer open") return res.status(400).json({ error: e.message });
     return next(e);
   }
+  await notify(client, { userId: Number(o.driver_id), role: "user", type: "ride_accepted", params: { ride: num(req.params.id), fare: Number(o.fare) }, rideId: num(req.params.id) });
   res.json({ ride_id: num(req.params.id), driver_id: o.driver_id, agreed_fare: o.fare });
 });
 
@@ -682,6 +774,7 @@ app.post("/api/rides/:id/counter", requireAuth, async (req, res) => {
     sql: "INSERT INTO offers(ride_id, driver_id, fare, eta_min, created_at) VALUES (?, ?, ?, 5, ?)",
     args: [num(req.params.id), num(driver_id), f, now()],
   });
+  await notify(client, { userId: Number(ride.rider_id), role: "user", type: "offer_received", params: { ride: num(req.params.id), driver: req.auth.name || "", fare: f }, rideId: num(req.params.id) });
   res.json({ offer_id: Number(r.lastInsertRowid), fare: f });
 });
 
@@ -709,6 +802,7 @@ app.post("/api/rides/:id/start", requireAuth, async (req, res) => {
     await tx.execute({ sql: "UPDATE rides SET status='ongoing' WHERE id = ? AND status='accepted'", args: [num(req.params.id)] });
     await writeRideHistory(tx, num(req.params.id), "accepted", "ongoing", req.auth.ownerId);
   });
+  await notify(client, { userId: Number(ride.rider_id), role: "user", type: "ride_started", params: { ride: num(req.params.id) }, rideId: num(req.params.id) });
   res.json({ status: "ongoing" });
 });
 
@@ -752,6 +846,8 @@ app.post("/api/rides/:id/complete", requireAuth, async (req, res) => {
     }
     return next(e);
   }
+  await notify(client, { userId: Number(ride.rider_id), role: "user", type: "ride_completed", params: { ride: num(req.params.id), fare }, rideId: num(req.params.id) });
+  await notify(client, { userId: Number(driverId), role: "user", type: "trip_completed", params: { ride: num(req.params.id), fare, kept: fare - take }, rideId: num(req.params.id) });
   res.json({
     status: "completed",
     fare,
@@ -797,6 +893,7 @@ app.post("/api/rides/:id/tip", requireAuth, async (req, res) => {
     sql: "UPDATE rides SET tip_amount = ? WHERE id = ? AND tip_amount = 0",
     args: [tip, num(req.params.id)],
   });
+  await notify(client, { userId: Number(ride.driver_id), role: "user", type: "tip_received", params: { ride: num(req.params.id), tip }, rideId: num(req.params.id) });
   res.json({ ride_id: num(req.params.id), tip, commission_on_tip: 0, note: "Tip 100% driver ko — is par koi commission nahi." });
 });
 
@@ -879,12 +976,14 @@ app.get("/api/admin/drivers", requireAdmin, async (req, res) => {
 app.post("/api/admin/drivers/:id/approve", requireAdmin, async (req, res) => {
   await client.execute({ sql: "UPDATE drivers SET status='approved', documents_status='approved' WHERE user_id = ?", args: [num(req.params.id)] });
   await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "driver_approve", targetType: "driver", targetId: num(req.params.id), detail: "Driver documents approved" });
+  await notify(client, { userId: num(req.params.id), role: "user", type: "driver_approved", params: {} });
   res.json({ status: "approved" });
 });
 
 app.post("/api/admin/drivers/:id/block", requireAdmin, async (req, res) => {
   await client.execute({ sql: "UPDATE drivers SET status='blocked', online=0 WHERE user_id = ?", args: [num(req.params.id)] });
   await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "driver_block", targetType: "driver", targetId: num(req.params.id), detail: "Driver blocked" });
+  await notify(client, { userId: num(req.params.id), role: "user", type: "driver_blocked", params: {} });
   res.json({ status: "blocked" });
 });
 
@@ -910,8 +1009,12 @@ app.get("/api/admin/complaints", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/admin/complaints/:id/resolve", requireAdmin, async (req, res) => {
+  const c = await client.execute({ sql: "SELECT * FROM complaints WHERE id = ?", args: [num(req.params.id)] });
   await client.execute({ sql: "UPDATE complaints SET status='resolved' WHERE id = ?", args: [num(req.params.id)] });
   await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "complaint_resolve", targetType: "complaint", targetId: num(req.params.id), detail: "Complaint resolved" });
+  if (c.rows.length && c.rows[0].user_id) {
+    await notify(client, { userId: Number(c.rows[0].user_id), role: "user", type: "complaint_resolved", params: { id: num(req.params.id) } });
+  }
   res.json({ status: "resolved" });
 });
 
@@ -938,6 +1041,7 @@ app.get("/api/admin/overview", requireAdmin, async (req, res) => {
   const ridesTotal = await one("SELECT COUNT(*) AS n FROM rides");
   const completedToday = await one("SELECT COUNT(*) AS n FROM rides WHERE status = 'completed' AND completed_at >= ?", [dayAgo]);
   const pendingTopups = await one("SELECT COUNT(*) AS n FROM topup_requests WHERE status = 'pending'");
+  const pendingWithdrawals = await one("SELECT COUNT(*) AS n FROM withdrawals WHERE status = 'pending'");
   const openComplaints = await one("SELECT COUNT(*) AS n FROM complaints WHERE status = 'open'");
   const pendingDrivers = await one("SELECT COUNT(*) AS n FROM drivers WHERE status = 'pending'");
   const rev7d = await one("SELECT COALESCE(SUM(commission_charged), 0) AS n FROM rides WHERE status = 'completed' AND completed_at >= ?", [weekAgo]);
@@ -945,6 +1049,7 @@ app.get("/api/admin/overview", requireAdmin, async (req, res) => {
   res.json({
     totals: { users, riders, drivers, drivers_online: driversOnline, rides_today: ridesToday, rides_total: ridesTotal, completed_today: completedToday },
     pending_topups: pendingTopups,
+    pending_withdrawals: pendingWithdrawals,
     open_complaints: openComplaints,
     pending_drivers: pendingDrivers,
     platform_revenue_7d: rev7d,
@@ -1049,7 +1154,8 @@ app.post("/api/admin/topups/:id/reject", requireAdmin, async (req, res) => {
   }
 });
 
-// Promo codes — foundation only (fare-math integration comes in Phase 6).
+// Promo codes (v2.1) — discounts now apply in /api/fare and /api/rides.
+// Percent or fixed, with optional date range and max_uses.
 app.get("/api/admin/promo-codes", requireAdmin, async (req, res) => {
   const rows = await client.execute({ sql: "SELECT * FROM promo_codes ORDER BY created_at DESC LIMIT 100" });
   res.json({ promo_codes: rows.rows });
@@ -1096,7 +1202,7 @@ app.post("/api/admin/demo/disable", requireAdmin, async (req, res) => {
 
 // Fare + commission settings — take effect immediately for new fare estimates.
 app.post("/api/admin/settings", requireAdmin, async (req, res) => {
-  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup"];
+  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup", "min_withdrawal"];
   const changed = [];
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
@@ -1165,6 +1271,249 @@ app.get("/api/admin/profit", requireAdmin, async (req, res) => {
     break_even_rides_per_day: breakEvenPerDay,
     scenarios: table,
   });
+});
+
+// ---- Withdrawals (v2.1) ----
+// Driver requests cash out of the prepaid wallet. The amount is HELD
+// (deducted from the wallet + ledger row "withdrawal_hold") at request
+// time. Approve = the owner pays manually on JazzCash outside the app
+// (no gateway); the hold simply stays deducted. Reject = the hold is
+// auto-refunded to the wallet. Double approve/reject fails (status guard).
+app.post("/api/drivers/me/withdraw", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user" || req.auth.role !== "driver") {
+    return res.status(403).json({ error: "Sirf driver apni withdrawal bhej sakta hai" });
+  }
+  const { amount, jazzcash_number, driver_id } = req.body || {};
+  // A driver can only ever withdraw from their OWN wallet: a body driver_id
+  // that does not match the session is rejected outright.
+  if (driver_id != null && num(driver_id) !== req.auth.ownerId) {
+    return res.status(403).json({ error: "Sirf apni withdrawal bhej sakte hain" });
+  }
+  const amt = Math.round(num(amount, 0));
+  const s = await getSettings();
+  const minW = Number(s.min_withdrawal || 100);
+  const jazz = String(jazzcash_number || "").trim();
+  if (amt < minW) return res.status(400).json({ error: "minimum withdrawal not met" });
+  if (!jazz || jazz.replace(/\D/g, "").length < 10) return res.status(400).json({ error: "JazzCash number is required" });
+  let out;
+  try {
+    out = await withTx(async (tx) => {
+      const d = await tx.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [req.auth.ownerId] });
+      if (!d.rows.length) throw new Error("driver not found");
+      const balRows = await tx.execute({ sql: "SELECT balance FROM wallets WHERE user_id = ?", args: [req.auth.ownerId] });
+      const balance = balRows.rows.length ? Number(balRows.rows[0].balance) : 0;
+      if (amt > balance) throw new Error("withdrawal amount is more than your wallet balance");
+      const newBal = await adjustWallet(tx, req.auth.ownerId, -amt, {
+        type: "withdrawal_hold",
+        method: "JazzCash",
+        note: `Withdrawal request — hold Rs ${amt} to JazzCash ${jazz}`,
+      });
+      const r = await tx.execute({
+        sql: "INSERT INTO withdrawals(driver_id, amount, jazzcash_number, status, created_at) VALUES (?, ?, ?, 'pending', ?)",
+        args: [req.auth.ownerId, amt, jazz, now()],
+      });
+      const requestId = Number(r.lastInsertRowid);
+      await writeAudit(tx, {
+        actorId: req.auth.ownerId, actorRole: "driver", action: "withdrawal_request",
+        targetType: "withdrawal", targetId: requestId,
+        detail: `Withdrawal request Rs ${amt} to JazzCash ${jazz} (hold deducted from wallet)`,
+      });
+      return { request_id: requestId, wallet_balance: newBal };
+    });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  await notifyAdmins(client, { type: "withdrawal_requested", params: { name: req.auth.name || "", amount: amt, number: jazz } });
+  res.json({ ...out, status: "pending", amount: amt, message: "Withdrawal request bhej di — amount wallet se hold kar di gayi hai." });
+});
+
+app.get("/api/drivers/me/withdrawals", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user" || req.auth.role !== "driver") {
+    return res.status(403).json({ error: "Sirf driver apni withdrawals dekh sakta hai" });
+  }
+  const rows = await client.execute({
+    sql: "SELECT * FROM withdrawals WHERE driver_id = ? ORDER BY created_at DESC LIMIT 50",
+    args: [req.auth.ownerId],
+  });
+  res.json({ withdrawals: rows.rows });
+});
+
+app.get("/api/admin/withdrawals", requireAdmin, async (req, res) => {
+  const status = req.query.status || "";
+  const sql = status
+    ? "SELECT w.*, u.name AS driver_name, u.phone AS driver_phone FROM withdrawals w JOIN users u ON u.id = w.driver_id WHERE w.status = ? ORDER BY w.created_at DESC LIMIT 100"
+    : "SELECT w.*, u.name AS driver_name, u.phone AS driver_phone FROM withdrawals w JOIN users u ON u.id = w.driver_id ORDER BY w.created_at DESC LIMIT 100";
+  const args = status ? [status] : [];
+  const rows = await client.execute({ sql, args });
+  res.json({ withdrawals: rows.rows });
+});
+
+app.post("/api/admin/withdrawals/:id/approve", requireAdmin, async (req, res) => {
+  try {
+    const out = await approveWithdrawal(num(req.params.id), req.auth.ownerId);
+    res.json({ status: "approved", ...out });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post("/api/admin/withdrawals/:id/reject", requireAdmin, async (req, res) => {
+  try {
+    const out = await rejectWithdrawal(num(req.params.id), req.auth.ownerId, String((req.body || {}).reason || ""));
+    res.json({ status: "rejected", ...out });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ---- Notifications (v2.1, in-app feed — no push) ----
+// One feed per identity: a user sees role='user' rows for their own id,
+// an admin sees role='admin' rows for their own admin id. The client
+// renders localized title/body from the type + params.
+app.get("/api/notifications", requireAuth, async (req, res) => {
+  const role = req.auth.ownerType === "admin" ? "admin" : "user";
+  const rows = await client.execute({
+    sql: "SELECT id, type, params, ride_id, is_read, created_at FROM notifications WHERE user_id = ? AND role = ? ORDER BY created_at DESC LIMIT 50",
+    args: [req.auth.ownerId, role],
+  });
+  const unread = await client.execute({
+    sql: "SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND role = ? AND is_read = 0",
+    args: [req.auth.ownerId, role],
+  });
+  res.json({
+    unread_count: Number(unread.rows[0].n),
+    notifications: rows.rows.map((n) => ({
+      id: n.id, type: n.type, params: JSON.parse(n.params || "{}"),
+      ride_id: n.ride_id, is_read: Number(n.is_read), created_at: n.created_at,
+    })),
+  });
+});
+
+app.post("/api/notifications/:id/read", requireAuth, async (req, res) => {
+  const role = req.auth.ownerType === "admin" ? "admin" : "user";
+  const r = await client.execute({
+    sql: "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ? AND role = ?",
+    args: [num(req.params.id), req.auth.ownerId, role],
+  });
+  if (Number(r.rowsAffected) !== 1) return res.status(404).json({ error: "notification not found" });
+  res.json({ ok: true });
+});
+
+app.post("/api/notifications/read-all", requireAuth, async (req, res) => {
+  const role = req.auth.ownerType === "admin" ? "admin" : "user";
+  const r = await client.execute({
+    sql: "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND role = ? AND is_read = 0",
+    args: [req.auth.ownerId, role],
+  });
+  res.json({ ok: true, marked: Number(r.rowsAffected) });
+});
+
+// ---- Refunds (v2.1, admin-only) ----
+// Owner-initiated wallet credit. The optional idempotency_key makes a
+// double-submit safe: the second call with the same key credits nothing.
+app.post("/api/admin/refunds", requireAdmin, async (req, res) => {
+  const { user_id, amount, reason, idempotency_key } = req.body || {};
+  const amt = Math.round(num(amount, 0));
+  if (!user_id || amt <= 0) return res.status(400).json({ error: "user_id and a refund amount are required" });
+  try {
+    const out = await createRefund(req.auth.ownerId, {
+      userId: num(user_id), amount: amt,
+      reason: String(reason || ""), idempotencyKey: idempotency_key ? String(idempotency_key) : null,
+    });
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ---- Driver documents (v2.1) ----
+// Photos are base64 data URLs stored in Turso (client downscales to
+// max 1024px JPEG 0.8 before upload; server caps at ~1.5 MB, JPG/PNG
+// only). The full data URL is visible ONLY to admins; the owning driver
+// sees metadata (type/status) only; other users see nothing at all.
+const DOC_TYPES = ["cnic_front", "cnic_back", "licence"];
+const DOC_MIMES = ["image/jpeg", "image/png"];
+const DOC_MAX_CHARS = 2100000; // ~1.5 MB of image bytes as base64
+
+app.post("/api/drivers/me/documents", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user" || req.auth.role !== "driver") {
+    return res.status(403).json({ error: "Sirf driver apni documents upload kar sakta hai" });
+  }
+  const { doc_type, mime, data_url } = req.body || {};
+  if (!DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: "invalid document type" });
+  if (!DOC_MIMES.includes(mime)) return res.status(400).json({ error: "only JPG or PNG photos are allowed" });
+  const dataUrl = String(data_url || "");
+  if (!dataUrl.startsWith("data:image/") || dataUrl.length > DOC_MAX_CHARS) {
+    return res.status(400).json({ error: "document is too large — max 1.5 MB" });
+  }
+  const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [req.auth.ownerId] });
+  if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
+  const out = await withTx(async (tx) => {
+    await tx.execute({ sql: "DELETE FROM documents WHERE driver_id = ? AND doc_type = ?", args: [req.auth.ownerId, doc_type] });
+    const r = await tx.execute({
+      sql: "INSERT INTO documents(driver_id, doc_type, data_url, mime, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)",
+      args: [req.auth.ownerId, doc_type, dataUrl, mime, now()],
+    });
+    return { document_id: Number(r.lastInsertRowid) };
+  });
+  res.json({ ...out, doc_type, status: "pending", message: "Document upload ho gaya — approval ke liye bhej di." });
+});
+
+app.get("/api/drivers/me/documents", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user" || req.auth.role !== "driver") {
+    return res.status(403).json({ error: "Sirf driver apni documents dekh sakta hai" });
+  }
+  const rows = await client.execute({
+    sql: "SELECT id, doc_type, mime, status, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
+    args: [req.auth.ownerId],
+  });
+  res.json({ documents: rows.rows });
+});
+
+app.get("/api/admin/drivers/:id/documents", requireAdmin, async (req, res) => {
+  const rows = await client.execute({
+    sql: "SELECT id, doc_type, mime, status, data_url, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
+    args: [num(req.params.id)],
+  });
+  res.json({ documents: rows.rows });
+});
+
+app.get("/api/admin/documents/:id", requireAdmin, async (req, res) => {
+  const rows = await client.execute({ sql: "SELECT * FROM documents WHERE id = ?", args: [num(req.params.id)] });
+  if (!rows.rows.length) return res.status(404).json({ error: "document not found" });
+  res.json({ document: rows.rows[0] });
+});
+
+app.post("/api/admin/documents/:id/approve", requireAdmin, async (req, res) => {
+  const doc = await client.execute({ sql: "SELECT * FROM documents WHERE id = ?", args: [num(req.params.id)] });
+  if (!doc.rows.length) return res.status(404).json({ error: "document not found" });
+  const d = doc.rows[0];
+  await withTx(async (tx) => {
+    await tx.execute({ sql: "UPDATE documents SET status='approved', reviewed_at=? WHERE id=?", args: [now(), num(req.params.id)] });
+    const approved = await tx.execute({
+      sql: "SELECT COUNT(*) AS n FROM documents WHERE driver_id = ? AND doc_type IN ('cnic_front','cnic_back','licence') AND status = 'approved'",
+      args: [d.driver_id],
+    });
+    if (Number(approved.rows[0].n) >= 3) {
+      await tx.execute({ sql: "UPDATE drivers SET documents_status='approved' WHERE user_id = ?", args: [d.driver_id] });
+    }
+  });
+  await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "document_approve", targetType: "document", targetId: num(req.params.id), detail: `Document ${d.doc_type} approved for driver user #${d.driver_id}` });
+  await notify(client, { userId: Number(d.driver_id), role: "user", type: "doc_approved", params: { doc: d.doc_type } });
+  res.json({ status: "approved" });
+});
+
+app.post("/api/admin/documents/:id/reject", requireAdmin, async (req, res) => {
+  const doc = await client.execute({ sql: "SELECT * FROM documents WHERE id = ?", args: [num(req.params.id)] });
+  if (!doc.rows.length) return res.status(404).json({ error: "document not found" });
+  const d = doc.rows[0];
+  await withTx(async (tx) => {
+    await tx.execute({ sql: "UPDATE documents SET status='rejected', reviewed_at=? WHERE id=?", args: [now(), num(req.params.id)] });
+    await tx.execute({ sql: "UPDATE drivers SET documents_status='pending' WHERE user_id = ?", args: [d.driver_id] });
+  });
+  await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "document_reject", targetType: "document", targetId: num(req.params.id), detail: `Document ${d.doc_type} rejected for driver user #${d.driver_id}` });
+  await notify(client, { userId: Number(d.driver_id), role: "user", type: "doc_rejected", params: { doc: d.doc_type } });
+  res.json({ status: "rejected" });
 });
 
 app.get("/", (req, res) => res.sendFile(path.join(root, "public", "index.html")));

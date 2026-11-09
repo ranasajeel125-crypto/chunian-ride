@@ -9,8 +9,10 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=6">
+<link rel="stylesheet" href="/style.css?v=7">
 <link rel="icon" type="image/png" href="/favicon.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
 <body>
 <header class="site">
@@ -23,6 +25,13 @@
       </div>
     </a>
     <div class="header-actions">
+      <div class="notif-wrap">
+        <button id="notif-bell" class="notif-bell" type="button" aria-label="Notifications">🔔<span id="notif-badge" class="notif-badge" style="display:none">0</span></button>
+        <div id="notif-panel" class="notif-panel hidden">
+          <div class="notif-head"><b data-i18n="notif_title">Notifications</b><button id="notif-mark-all" class="link-btn" type="button" data-i18n="notif_mark_all">Mark all read</button></div>
+          <div id="notif-list" class="notif-list"></div>
+        </div>
+      </div>
       <div class="lang-switch" role="group" aria-label="Language / زبان">
         <button type="button" class="lang-opt" data-lang="en">EN</button>
         <button type="button" class="lang-opt" data-lang="ur">اردو</button>
@@ -94,6 +103,8 @@
       <label for="proposed-fare" data-i18n="offer_label">Offer your fare (Rs)</label>
       <input id="proposed-fare" type="number" min="1">
       <p class="muted" data-i18n="offer_hint">The driver can accept or counter-offer. The suggested fare is filled in for you.</p>
+      <label for="promo-code" data-i18n="promo_label">Promo code (optional)</label>
+      <input id="promo-code" data-i18n-ph="promo_ph" placeholder="e.g. CHUNIAN10" autocapitalize="characters">
       <details class="sched-details">
         <summary data-i18n="book_later">🕐 Book for later (optional)</summary>
         <div class="row3">
@@ -170,6 +181,15 @@
       <h2 data-i18n="wallet_title">Wallet</h2>
       <div id="rider-wallet"><p class="muted" data-i18n="loading">Loading…</p></div>
     </div>
+    <div class="card">
+      <h2 data-i18n="topup_title">Top-up — prepaid wallet</h2>
+      <input id="rider-topup-amount" type="number" min="500" data-i18n-ph="topup_amount_ph" placeholder="Top-up amount (Rs) — minimum Rs 500">
+      <input id="rider-topup-tid" data-i18n-ph="topup_tid_ph" placeholder="JazzCash TID (transaction ID)">
+      <p class="form-err" id="rider-topup-err" role="alert"></p>
+      <button id="btn-rider-topup">Send top-up request</button>
+      <p class="muted" id="rider-topup-note"></p>
+      <div id="rider-topup-requests"></div>
+    </div>
   </section>
 
   <!-- ============ PROFILE ============ -->
@@ -212,8 +232,8 @@
 </nav>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/shared.js?v=6"></script>
-<script src="/rider.js?v=6"></script>
+<script src="/shared.js?v=7"></script>
+<script src="/rider.js?v=7"></script>
 <script>
   $("btn-rider-signup").addEventListener("click", (e) => riderSignup(e.currentTarget));
   $("btn-rider-login").addEventListener("click", (e) => riderLogin(e.currentTarget));

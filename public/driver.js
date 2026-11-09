@@ -1,6 +1,6 @@
 // Chunian Ride — driver app (driver.html). Driver only; no rider/admin code.
 const store = { driver: null };
-let settings = { rate_bike_per_km: 15, rate_rickshaw_per_km: 25, rate_car_per_km: 70, rate_ac_car_per_km: 85, min_bike: 50, min_rickshaw: 100, min_car: 150, min_ac_car: 200, jazzcash_number: "03266040350", min_topup: 500, support_phone: "" };
+let settings = { rate_bike_per_km: 15, rate_rickshaw_per_km: 25, rate_car_per_km: 70, rate_ac_car_per_km: 85, min_bike: 50, min_rickshaw: 100, min_car: 150, min_ac_car: 200, jazzcash_number: "03266040350", min_topup: 500, min_withdrawal: 100, support_phone: "" };
 let driverActiveRide = null;
 let chatTimer = null;
 let locWatchId = null, lastLocPost = 0;
@@ -13,7 +13,7 @@ function switchScreen(name) {
   if (!store.driver) return;
   if (name === "requests") loadRequests();
   if (name === "wallet") loadWallet();
-  if (name === "profile") renderDriverProfile();
+  if (name === "profile") { renderDriverProfile(); renderDocs(); }
   if (name === "home") { loadDriverRides(); loadEarnings(1); }
   window.scrollTo({ top: 0 });
 }
@@ -24,8 +24,10 @@ window.onLangChange = () => {
   $("topup-amount").placeholder = t("topup_amount_ph", { min: settings.min_topup || 500 });
   $("btn-topup").textContent = t("btn_topup", { num: settings.jazzcash_number || "03266040350" });
   $("topup-note").textContent = t("topup_note", { num: settings.jazzcash_number || "03266040350" });
+  $("withdraw-amount").placeholder = t("withdraw_amount_ph", { min: settings.min_withdrawal || 100 });
   if (currentScreen === "requests") loadRequests();
   if (currentScreen === "wallet") loadWallet();
+  if (currentScreen === "profile") renderDocs();
 };
 
 // ---------- Auth ----------
@@ -244,6 +246,7 @@ async function loadWallet() {
     const reqs = [...(d.pending_topups || []), ...(d.past_topups || [])];
     $("topup-requests").innerHTML = reqs.length ? `<h4>${t("topup_history")}</h4>` + reqs.map((x) => `<div class="tx-row">${fmtRs(x.amount)} • ${escapeHtml(x.method)} • TID ${escapeHtml(x.tid || "—")} • ${t("status")}: <b>${escapeHtml(x.status)}</b>${x.reject_reason ? ` • ${escapeHtml(x.reject_reason)}` : ""}<br><span class="muted">${new Date(x.created_at).toLocaleString()}</span></div>`).join("") : "";
   } catch (e) { $("wallet-info").innerHTML = `<p class="form-err">${escapeHtml(e.message)}</p>`; }
+  loadWithdrawals();
 }
 async function topup(btn) {
   const amount = Number($("topup-amount").value), tid = $("topup-tid").value.trim();
@@ -256,6 +259,93 @@ async function topup(btn) {
     loadWallet();
   } catch (e) { setErr($("topup-err"), e.message); }
   finally { setLoading(btn, false); }
+}
+
+// ---------- Withdrawals (v2.1) ----------
+async function loadWithdrawals() {
+  if (!store.driver) return;
+  try {
+    const d = await api("/api/drivers/me/withdrawals");
+    const list = d.withdrawals || [];
+    $("withdraw-requests").innerHTML = list.length ? `<h4>${t("withdraw_history")}</h4>` + list.map((x) => `<div class="tx-row">${fmtRs(x.amount)} → ${escapeHtml(x.jazzcash_number)} • ${t("status")}: <b>${escapeHtml(x.status)}</b>${x.reason ? ` • ${escapeHtml(x.reason)}` : ""}<br><span class="muted">${new Date(x.created_at).toLocaleString()}</span></div>`).join("") : "";
+  } catch {}
+}
+async function withdraw(btn) {
+  const amount = Number($("withdraw-amount").value);
+  const jazz = $("withdraw-jazzcash").value.trim();
+  if (!amount) { setErr($("withdraw-err"), t("withdraw_enter_amount")); return; }
+  const min = Number(settings.min_withdrawal || 100);
+  if (amount < min) { setErr($("withdraw-err"), t("withdraw_min", { min })); return; }
+  if (!jazz) { setErr($("withdraw-err"), t("withdraw_enter_number")); return; }
+  setLoading(btn, true);
+  try {
+    const d = await api("/api/drivers/me/withdraw", { method: "POST", body: JSON.stringify({ amount, jazzcash_number: jazz }) });
+    toast(t("withdraw_sent", { id: d.request_id, amount: d.amount }), "ok");
+    $("withdraw-amount").value = ""; $("withdraw-jazzcash").value = "";
+    loadWithdrawals(); loadWallet();
+  } catch (e) { setErr($("withdraw-err"), e.message); toast(e.message, "error"); }
+  finally { setLoading(btn, false); }
+}
+
+// ---------- Documents — photo upload (v2.1) ----------
+// Client-side downscale: max 1024px on the long side, JPEG quality 0.8.
+// The server rejects anything over ~1.5 MB after downscaling and only
+// accepts JPG/PNG — the photos are stored as base64 in Turso, visible
+// only to admins (the driver sees status only).
+async function downscaleImage(file) {
+  const img = await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => { URL.revokeObjectURL(url); resolve(im); };
+    im.onerror = () => { URL.revokeObjectURL(url); reject(new Error("bad image")); };
+    im.src = url;
+  });
+  const maxSide = 1024;
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", 0.8);
+}
+function docLabel(dt) {
+  return t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", licence: "doc_licence" }[dt] || "doc_licence");
+}
+async function uploadDoc(docType, file, btn) {
+  if (!file) return;
+  if (!["image/jpeg", "image/png"].includes(file.type)) { setErr($("docs-err"), t("doc_bad_type")); return; }
+  setLoading(btn, true);
+  try {
+    const dataUrl = await downscaleImage(file);
+    if (dataUrl.length > 2100000) { setErr($("docs-err"), t("doc_too_large")); return; }
+    await api("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: docType, mime: "image/jpeg", data_url: dataUrl }) });
+    toast(t("doc_uploaded", { doc: docLabel(docType) }), "ok");
+    renderDocs();
+  } catch (e) { setErr($("docs-err"), e.message); toast(e.message, "error"); }
+  finally { setLoading(btn, false); }
+}
+async function renderDocs() {
+  if (!store.driver) return;
+  const box = $("docs-list");
+  if (!box) return;
+  box.innerHTML = `<p class="muted">${t("loading")}</p>`;
+  try {
+    const d = await api("/api/drivers/me/documents");
+    const byType = {};
+    for (const doc of d.documents || []) byType[doc.doc_type] = doc;
+    box.innerHTML = ["cnic_front", "cnic_back", "licence"].map((dt) => {
+      const doc = byType[dt];
+      const status = doc ? (doc.status === "approved" ? t("doc_approved") : doc.status === "rejected" ? t("doc_rejected") : t("doc_pending")) : t("doc_pending");
+      return `<div class="doc-row"><span><b>${docLabel(dt)}</b><br><span class="badge">${status}</span></span>
+        <label class="doc-upload-btn">${t("doc_upload")}<input type="file" accept="image/jpeg,image/png" data-doc="${dt}" class="hidden-file"></label></div>`;
+    }).join("");
+    $$(".hidden-file", box).forEach((input) => input.addEventListener("change", () => {
+      const file = input.files && input.files[0];
+      if (file) uploadDoc(input.dataset.doc, file, input.closest(".doc-upload-btn"));
+      input.value = "";
+    }));
+  } catch (e) { box.innerHTML = `<p class="form-err">${escapeHtml(e.message)}</p>`; }
 }
 async function loadEarnings(days) {
   if (!store.driver) return;
@@ -288,6 +378,7 @@ async function registerDriver(btn) {
 // ---------- Boot ----------
 async function boot() {
   initLangToggle();
+  initNotifications();
   applyI18n();
   try {
     const d = await api("/api/settings");
@@ -296,6 +387,7 @@ async function boot() {
   $("topup-amount").placeholder = t("topup_amount_ph", { min: settings.min_topup || 500 });
   $("btn-topup").textContent = t("btn_topup", { num: settings.jazzcash_number || "03266040350" });
   $("topup-note").textContent = t("topup_note", { num: settings.jazzcash_number || "03266040350" });
+  $("withdraw-amount").placeholder = t("withdraw_amount_ph", { min: settings.min_withdrawal || 100 });
   // Session restore: driver stays, rider is redirected, guest sees the login card.
   try {
     const d = await api("/api/auth/me");

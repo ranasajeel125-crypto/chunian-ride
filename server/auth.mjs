@@ -186,8 +186,15 @@ export function setupSucceeded(req) {
   if (req._setupKey) setupAttempts.delete(req._setupKey);
 }
 const loginAttempts = new Map(); // key -> { count, firstAt }
+// v2.1: keyed by PHONE alone (not IP+phone). The old IP+phone key let a
+// client whose egress IP rotates (mobile data, some proxies) dodge the
+// limiter for its first several failures. Phone-only keying trips the
+// limiter after 5 failures for that phone no matter which IP they come
+// from. Trade-off (accepted by the owner): an attacker can lock a phone
+// out for 15 minutes by failing 5 times — the account itself stays safe,
+// and the real owner just waits 15 minutes.
 export function loginRateLimit(req, res, next) {
-  const key = `${req.ip || "?"}:${normalizePhone((req.body && req.body.phone) || "")}`;
+  const key = normalizePhone((req.body && req.body.phone) || "");
   const entry = loginAttempts.get(key);
   if (entry && entry.count >= 5 && Date.now() - entry.firstAt < 15 * 60 * 1000) {
     return res.status(429).json({ error: "Bohat zyada ghalat koshishein — 15 minute baad dobara koshish karein" });

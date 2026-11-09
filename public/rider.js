@@ -39,6 +39,7 @@ window.onLangChange = () => {
   if (currentScreen === "rides") loadHistory();
   if (currentScreen === "wallet") loadRiderWallet();
   if (currentScreen === "profile") renderProfile();
+  renderRiderTopupForm();
 };
 
 // ---------- Map ----------
@@ -138,20 +139,27 @@ async function estimateFare(auto) {
   if (!dest) { if (!auto) toast(t("fare_unknown"), "error"); return; }
   const body = { pickup: $("pickup").value === "__gps__" ? "Current location" : $("pickup").value, destination: dest, vehicle };
   if ($("pickup").value === "__gps__" && gpsDistanceKm) body.distance_km = Math.max(1, Math.round(gpsDistanceKm * 10) / 10);
+  const promo = $("promo-code") ? $("promo-code").value.trim() : "";
+  if (promo) body.promo_code = promo;
   try {
     const d = await api("/api/fare", { method: "POST", body: JSON.stringify(body) });
     fareEstimate = d;
     renderFareBox();
     $("proposed-fare").value = d.suggested_fare;
+    setErr($("fare-err"), "");
   } catch (e) {
-    if (!auto) { setErr($("fare-err"), e.message); toast(e.message, "error"); }
+    // A bad promo must surface even in auto mode — the rider typed a code.
+    if (!auto || promo) { setErr($("fare-err"), e.message); toast(e.message, "error"); }
   }
 }
 function renderFareBox() {
   const d = fareEstimate;
   if (!d) return;
   $("fare-box").classList.remove("hidden");
-  $("fare-box").innerHTML = `${t("fare_estimate")}: <b>${fmtRs(d.suggested_fare)}</b> — ${t("fare_distance", { km: d.distance_km, per_km: d.per_km, min: d.min_fare })}${d.distance_estimated ? " — <i>" + t("fare_estimated_note") + "</i>" : ""}`;
+  const discountLine = d.discount_amount > 0
+    ? `<br>${t("fare_base", { base: d.base_fare })} − ${t("fare_discount", { discount: d.discount_amount })}${d.promo_code ? ` (${escapeHtml(d.promo_code)})` : ""}`
+    : "";
+  $("fare-box").innerHTML = `${t("fare_estimate")}: <b>${fmtRs(d.suggested_fare)}</b> — ${t("fare_distance", { km: d.distance_km, per_km: d.per_km, min: d.min_fare })}${d.distance_estimated ? " — <i>" + t("fare_estimated_note") + "</i>" : ""}${discountLine}`;
 }
 
 // ---------- Auth ----------
@@ -193,6 +201,8 @@ async function requestRide(btn) {
   if (!store.rider) { setErr($("book-err"), t("err_login_first")); toast(t("err_login_first"), "error"); return; }
   const body = { rider_id: store.rider.id, pickup: $("pickup").value === "__gps__" ? "Current location" : $("pickup").value, destination: $("destination").value, vehicle, proposed_fare: Number($("proposed-fare").value) || (fareEstimate && fareEstimate.suggested_fare) };
   if ($("pickup").value === "__gps__" && gpsDistanceKm) body.distance_km = Math.max(1, Math.round(gpsDistanceKm * 10) / 10);
+  const promo = $("promo-code") ? $("promo-code").value.trim() : "";
+  if (promo) body.promo_code = promo;
   const sd = $("sched-date").value, st = $("sched-time").value;
   if (sd || st) {
     if (!sd || !st) { setErr($("book-err"), t("sched_both")); return; }
@@ -402,10 +412,40 @@ async function loadRiderWallet() {
     const tx = d.transactions || [];
     $("rider-wallet").innerHTML = `<p class="wallet-balance">${t("balance")}: <b>${fmtRs(d.balance)}</b></p>` +
       (tx.length ? tx.map((x) => `<div class="tx-row">${escapeHtml(x.type || "")} — ${fmtRs(x.amount)} • ${escapeHtml(x.method || "")} ${escapeHtml(x.tid || "")} • ${escapeHtml(x.note || "")}<br><span class="muted">${new Date(x.created_at).toLocaleString()}</span></div>`).join("") : `<p class="muted empty">${t("no_tx")}</p>`);
+    renderRiderTopupRequests(d);
   } catch (e) {
     $("rider-wallet").innerHTML = `<p class="form-err">${t("wallet_unavailable")}</p><button class="secondary" id="wallet-retry">${t("retry")}</button>`;
     $("wallet-retry").addEventListener("click", loadRiderWallet);
   }
+}
+
+// ---------- Rider wallet top-up (v2.1 — same manual JazzCash flow as drivers) ----------
+function renderRiderTopupForm() {
+  const amt = $("rider-topup-amount"), btn = $("btn-rider-topup"), note = $("rider-topup-note");
+  if (!amt || !btn || !note) return;
+  const min = Number(settings.min_topup || 500);
+  const num = settings.jazzcash_number || "03266040350";
+  amt.placeholder = t("topup_amount_ph", { min });
+  btn.textContent = t("btn_topup", { num });
+  note.textContent = t("topup_note", { num });
+}
+function renderRiderTopupRequests(d) {
+  const box = $("rider-topup-requests");
+  if (!box) return;
+  const reqs = [...(d.pending_topups || []), ...(d.past_topups || [])];
+  box.innerHTML = reqs.length ? `<h4>${t("topup_history")}</h4>` + reqs.map((x) => `<div class="tx-row">${fmtRs(x.amount)} • ${escapeHtml(x.method || "JazzCash")} • TID ${escapeHtml(x.tid || "—")} • ${t("status")}: <b>${escapeHtml(x.status)}</b>${x.reject_reason ? ` • ${escapeHtml(x.reject_reason)}` : ""}<br><span class="muted">${new Date(x.created_at).toLocaleString()}</span></div>`).join("") : "";
+}
+async function riderTopup(btn) {
+  const amount = Number($("rider-topup-amount").value), tid = $("rider-topup-tid").value.trim();
+  if (!amount) { setErr($("rider-topup-err"), t("topup_enter_amount")); return; }
+  setLoading(btn, true);
+  try {
+    const d = await api("/api/topup", { method: "POST", body: JSON.stringify({ amount, method: "JazzCash", tid }) });
+    toast(t("topup_sent", { id: d.request_id, amount: d.amount }), "ok");
+    $("rider-topup-amount").value = ""; $("rider-topup-tid").value = "";
+    loadRiderWallet();
+  } catch (e) { setErr($("rider-topup-err"), e.message); toast(e.message, "error"); }
+  finally { setLoading(btn, false); }
 }
 
 // ---------- Profile ----------
@@ -426,8 +466,11 @@ async function loadSettings() {
 }
 async function boot() {
   initLangToggle();
+  initNotifications();
   applyI18n();
   await loadSettings();
+  renderRiderTopupForm();
+  $("btn-rider-topup").addEventListener("click", (e) => riderTopup(e.currentTarget));
   // The map is optional: if Leaflet's CDN fails (offline / blocked), the
   // whole rider app must NOT die — booking via the place selects still
   // works, and session restore below must still run.

@@ -55,6 +55,7 @@ export const DEFAULT_SETTINGS = {
   sadapay_number: "",
   owner_name: "Chunian Ride",
   min_topup: "500",
+  min_withdrawal: "100",
   support_phone: "",
   support_whatsapp: "",
 };
@@ -268,6 +269,51 @@ const STATEMENTS = [
     active INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL
   )`,
+  // Withdrawals (v2.1) — driver requests cash out of the prepaid wallet.
+  // The amount is HELD (deducted) at request time; approve = the owner
+  // pays manually on JazzCash (no gateway); reject = auto-refund of the hold.
+  `CREATE TABLE IF NOT EXISTS withdrawals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    driver_id INTEGER NOT NULL REFERENCES users(id),
+    amount INTEGER NOT NULL,
+    jazzcash_number TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    reason TEXT NOT NULL DEFAULT '',
+    reviewed_by INTEGER,
+    reviewed_at INTEGER,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_withdrawals_driver ON withdrawals(driver_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)`,
+  // Notifications (v2.1) — in-app feed, Phase 1 (no push). type + params
+  // (JSON); the client renders localized title/body from its template map.
+  // role: 'user' (rider/driver, user_id = users.id) | 'admin' (admins.id).
+  `CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    type TEXT NOT NULL,
+    params TEXT NOT NULL DEFAULT '{}',
+    ride_id INTEGER,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, role, created_at)`,
+  // Driver documents (v2.1) — base64 photo uploads (client-downscaled to
+  // <=1.5 MB, JPG/PNG only). Full data URL is visible ONLY to admins;
+  // the owning driver sees metadata (type/status) only. One row per
+  // (driver_id, doc_type).
+  `CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    driver_id INTEGER NOT NULL REFERENCES users(id),
+    doc_type TEXT NOT NULL,
+    data_url TEXT NOT NULL DEFAULT '',
+    mime TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    reviewed_at INTEGER,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_driver_type ON documents(driver_id, doc_type)`,
   // Passengers — rider profile extras (Phase 2 fills this in).
   `CREATE TABLE IF NOT EXISTS passengers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -287,6 +333,8 @@ const COLUMN_MIGRATIONS = [
   ["drivers", "loc_updated_at INTEGER"],
   ["rides", "scheduled_for INTEGER"],
   ["rides", "tip_amount INTEGER NOT NULL DEFAULT 0"],
+  ["rides", "promo_code TEXT NOT NULL DEFAULT ''"],
+  ["rides", "discount_amount INTEGER NOT NULL DEFAULT 0"],
 ];
 
 function haversineKm(a, b) {
@@ -380,15 +428,15 @@ export async function getWalletBalance(userId) {
 
 // Adjust a user's wallet by delta (positive = credit, negative = debit).
 // Writes the ledger row + mirror in the same transaction when tx is given.
-export async function adjustWallet(txOrClient, userId, delta, { type, method = "", tid = "", note = "", rideId = null }) {
+export async function adjustWallet(txOrClient, userId, delta, { type, method = "", tid = "", note = "", rideId = null, reference = "" }) {
   await ensureWallet(txOrClient, userId);
   await txOrClient.execute({
     sql: "UPDATE wallets SET balance = balance + ?, updated_at = ? WHERE user_id = ?",
     args: [delta, Date.now(), userId],
   });
   await txOrClient.execute({
-    sql: "INSERT INTO transactions(user_id, type, amount, method, tid, note, related_ride_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    args: [userId, type, delta, method, tid, note, rideId, Date.now()],
+    sql: "INSERT INTO transactions(user_id, type, amount, method, tid, reference, note, related_ride_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    args: [userId, type, delta, method, tid, reference, note, rideId, Date.now()],
   });
   // Mirror for drivers (v1 reads drivers.wallet_balance).
   const d = await txOrClient.execute({ sql: "SELECT 1 AS x FROM drivers WHERE user_id = ?", args: [userId] });
@@ -426,6 +474,7 @@ export async function approveTopup(requestId, adminId) {
       targetType: "topup_request", targetId: requestId,
       detail: `Approved Rs ${req.amount} (${req.method}, TID ${req.tid || "—"}) for driver user #${req.driver_id}`,
     });
+    notify(tx, { userId: Number(req.driver_id), role: "user", type: "topup_approved", params: { amount: Number(req.amount), tid: req.tid || "" } });
     return { driver_id: Number(req.driver_id), amount: Number(req.amount), wallet_balance: balance };
   });
 }
@@ -445,7 +494,144 @@ export async function rejectTopup(requestId, adminId, reason = "") {
       targetType: "topup_request", targetId: requestId,
       detail: `Rejected Rs ${req.amount} (${req.method}, TID ${req.tid || "—"}) for driver user #${req.driver_id}. Reason: ${reason || "—"}`,
     });
+    notify(tx, { userId: Number(req.driver_id), role: "user", type: "topup_rejected", params: { amount: Number(req.amount), reason: reason || "" } });
     return { driver_id: Number(req.driver_id), amount: Number(req.amount) };
+  });
+}
+
+// ---- Notifications (v2.1, in-app feed — no push) ----
+// Insert one notification row. NEVER throws: a failed notification must
+// never roll back the money/ride operation running in the same transaction.
+export async function notify(txOrClient, { userId, role = "user", type, params = {}, rideId = null }) {
+  try {
+    await txOrClient.execute({
+      sql: "INSERT INTO notifications(user_id, role, type, params, ride_id, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+      args: [Number(userId), role, type, JSON.stringify(params || {}), rideId, Date.now()],
+    });
+  } catch (e) {
+    console.warn("[chunian-ride] notification insert failed:", e.message);
+  }
+}
+
+// One notification row per admin account (owner sees every request).
+export async function notifyAdmins(txOrClient, { type, params = {}, rideId = null }) {
+  try {
+    const admins = await txOrClient.execute("SELECT id FROM admins");
+    for (const a of admins.rows) {
+      await notify(txOrClient, { userId: Number(a.id), role: "admin", type, params, rideId });
+    }
+  } catch (e) {
+    console.warn("[chunian-ride] notifyAdmins failed:", e.message);
+  }
+}
+
+// ---- Promo validation + discount math (v2.1) ----
+// Throws a fixed-string Error when the code cannot be used (so the client
+// can translate it via ERR_MAP). Returns the promo row when valid.
+export async function validatePromo(txOrClient, code) {
+  const clean = String(code || "").trim().toUpperCase();
+  if (!clean) throw new Error("promo code is required");
+  const r = await txOrClient.execute({ sql: "SELECT * FROM promo_codes WHERE code = ?", args: [clean] });
+  if (!r.rows.length) throw new Error("promo code not found");
+  const p = r.rows[0];
+  if (!Number(p.active)) throw new Error("promo code is not active");
+  const nowMs = Date.now();
+  if (p.valid_from && nowMs < Number(p.valid_from)) throw new Error("promo code is not valid yet");
+  if (p.valid_to && nowMs > Number(p.valid_to)) throw new Error("promo code has expired");
+  if (Number(p.max_uses) > 0 && Number(p.uses) >= Number(p.max_uses)) throw new Error("promo code has reached its maximum uses");
+  return p;
+}
+
+// Discount amount in Rs for a base fare. Percent rounds to the nearest rupee;
+// fixed is capped so the final fare never drops below Rs 1.
+export function promoDiscount(baseFare, promo) {
+  const base = Math.max(1, Math.round(Number(baseFare) || 0));
+  if (promo.discount_type === "fixed") return Math.min(Number(promo.discount_value), base - 1);
+  return Math.min(base - 1, Math.round((base * Number(promo.discount_value)) / 100));
+}
+
+// ---- Withdrawals (v2.1) ----
+// Approve a pending withdrawal: status guard + audit + driver notification,
+// all in ONE transaction. The hold stays deducted — the owner pays the
+// driver manually on JazzCash outside the app (no gateway). Throws if the
+// request does not exist or is not pending (no double-pay).
+export async function approveWithdrawal(requestId, adminId) {
+  return withTx(async (tx) => {
+    const cur = await tx.execute({ sql: "SELECT * FROM withdrawals WHERE id = ?", args: [requestId] });
+    if (!cur.rows.length) throw new Error("withdrawal request not found");
+    const req = cur.rows[0];
+    if (req.status !== "pending") throw new Error("withdrawal request already reviewed");
+    await tx.execute({
+      sql: "UPDATE withdrawals SET status='approved', reviewed_by=?, reviewed_at=? WHERE id=? AND status='pending'",
+      args: [adminId, Date.now(), requestId],
+    });
+    await writeAudit(tx, {
+      actorId: adminId, actorRole: "admin", action: "withdrawal_approve",
+      targetType: "withdrawal", targetId: requestId,
+      detail: `Approved withdrawal Rs ${req.amount} to JazzCash ${req.jazzcash_number} for driver user #${req.driver_id} (owner pays manually)`,
+    });
+    notify(tx, { userId: Number(req.driver_id), role: "user", type: "withdrawal_approved", params: { amount: Number(req.amount), number: req.jazzcash_number || "" } });
+    const bal = await tx.execute({ sql: "SELECT balance FROM wallets WHERE user_id = ?", args: [Number(req.driver_id)] });
+    return { driver_id: Number(req.driver_id), amount: Number(req.amount), wallet_balance: bal.rows.length ? Number(bal.rows[0].balance) : 0 };
+  });
+}
+
+// Reject a pending withdrawal: status guard + AUTO-REFUND of the hold back
+// to the driver's wallet (+ ledger row) + audit + notification, in ONE
+// transaction. Throws if not pending (no double-refund).
+export async function rejectWithdrawal(requestId, adminId, reason = "") {
+  return withTx(async (tx) => {
+    const cur = await tx.execute({ sql: "SELECT * FROM withdrawals WHERE id = ?", args: [requestId] });
+    if (!cur.rows.length) throw new Error("withdrawal request not found");
+    const req = cur.rows[0];
+    if (req.status !== "pending") throw new Error("withdrawal request already reviewed");
+    await tx.execute({
+      sql: "UPDATE withdrawals SET status='rejected', reviewed_by=?, reviewed_at=?, reason=? WHERE id=? AND status='pending'",
+      args: [adminId, Date.now(), reason, requestId],
+    });
+    const balance = await adjustWallet(tx, Number(req.driver_id), Number(req.amount), {
+      type: "withdrawal_refund",
+      method: "JazzCash",
+      note: `Withdrawal #${requestId} rejected — hold refunded (Rs ${req.amount})`,
+    });
+    await writeAudit(tx, {
+      actorId: adminId, actorRole: "admin", action: "withdrawal_reject",
+      targetType: "withdrawal", targetId: requestId,
+      detail: `Rejected withdrawal Rs ${req.amount} for driver user #${req.driver_id}; hold refunded. Reason: ${reason || "—"}`,
+    });
+    notify(tx, { userId: Number(req.driver_id), role: "user", type: "withdrawal_rejected", params: { amount: Number(req.amount), reason: reason || "" } });
+    return { driver_id: Number(req.driver_id), amount: Number(req.amount), wallet_balance: balance };
+  });
+}
+
+// ---- Admin refunds (v2.1) ----
+// Owner-initiated wallet credit (e.g. wrongly charged commission, cancelled
+// ride). Transactional: credit + ledger + audit + notification. The optional
+// idempotency key makes a double-click / retry safe: a second call with the
+// same key returns {duplicate: true} and credits NOTHING.
+export async function createRefund(adminId, { userId, amount, reason = "", idempotencyKey = null }) {
+  return withTx(async (tx) => {
+    const u = await tx.execute({ sql: "SELECT id FROM users WHERE id = ?", args: [userId] });
+    if (!u.rows.length) throw new Error("user not found");
+    if (idempotencyKey) {
+      const dup = await tx.execute({ sql: "SELECT id FROM transactions WHERE reference = ? LIMIT 1", args: [idempotencyKey] });
+      if (dup.rows.length) {
+        const bal = await tx.execute({ sql: "SELECT balance FROM wallets WHERE user_id = ?", args: [userId] });
+        return { user_id: userId, amount, wallet_balance: bal.rows.length ? Number(bal.rows[0].balance) : 0, duplicate: true };
+      }
+    }
+    const balance = await adjustWallet(tx, userId, amount, {
+      type: "refund",
+      note: `Refund by admin: ${reason || "—"}`,
+      reference: idempotencyKey || "",
+    });
+    await writeAudit(tx, {
+      actorId: adminId, actorRole: "admin", action: "refund_credit",
+      targetType: "user", targetId: userId,
+      detail: `Refund Rs ${amount} to user #${userId}. Reason: ${reason || "—"}`,
+    });
+    notify(tx, { userId, role: "user", type: "refund_credited", params: { amount, reason: reason || "" } });
+    return { user_id: userId, amount, wallet_balance: balance, duplicate: false };
   });
 }
 

@@ -8,8 +8,10 @@
 <meta name="description" content="Chunian Ride owner admin dashboard — rides, drivers, top-ups, wallets, promo codes, cities and settings.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/admin.css?v=6">
+<link rel="stylesheet" href="/admin.css?v=7">
 <link rel="icon" type="image/png" href="/favicon.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
 <body>
 <header class="topbar">
@@ -21,6 +23,13 @@
     </div>
   </div>
   <span class="who hidden" id="admin-who"></span>
+  <div class="notif-wrap">
+    <button id="notif-bell" class="notif-bell notif-bell-dark" type="button" aria-label="Notifications">🔔<span id="notif-badge" class="notif-badge" style="display:none">0</span></button>
+    <div id="notif-panel" class="notif-panel hidden">
+      <div class="notif-head"><b data-i18n="notif_title">Notifications</b><button id="notif-mark-all" class="link-btn" type="button" data-i18n="notif_mark_all">Mark all read</button></div>
+      <div id="notif-list" class="notif-list"></div>
+    </div>
+  </div>
   <div class="lang-switch lang-switch-dark" role="group" aria-label="Language / زبان">
     <button type="button" class="lang-opt" data-lang="en">EN</button>
     <button type="button" class="lang-opt" data-lang="ur">اردو</button>
@@ -71,6 +80,7 @@
       <button class="nav-btn" type="button" data-section="drivers"><span class="ico">🧑‍✈️</span><span data-i18n="nav_drivers">Drivers</span><span class="badge hidden" id="badge-drivers">0</span></button>
       <button class="nav-btn" type="button" data-section="users"><span class="ico">👥</span><span data-i18n="nav_users">Users</span></button>
       <button class="nav-btn" type="button" data-section="topups"><span class="ico">💰</span><span data-i18n="nav_topups">Top-ups</span><span class="badge hidden" id="badge-topups">0</span></button>
+      <button class="nav-btn" type="button" data-section="withdrawals"><span class="ico">🏧</span><span data-i18n="nav_withdrawals">Withdrawals</span><span class="badge hidden" id="badge-withdrawals">0</span></button>
       <button class="nav-btn" type="button" data-section="wallets"><span class="ico">👛</span><span data-i18n="nav_wallets">Wallets</span></button>
       <button class="nav-btn" type="button" data-section="promos"><span class="ico">🎟️</span><span data-i18n="nav_promos">Promo Codes</span></button>
       <button class="nav-btn" type="button" data-section="complaints"><span class="ico">🆘</span><span data-i18n="nav_complaints">Complaints</span><span class="badge hidden" id="badge-complaints">0</span></button>
@@ -87,6 +97,7 @@
         <option value="drivers" data-i18n="nav_drivers">Drivers</option>
         <option value="users" data-i18n="nav_users">Users</option>
         <option value="topups" data-i18n="nav_topups">Top-ups</option>
+        <option value="withdrawals" data-i18n="nav_withdrawals">Withdrawals</option>
         <option value="wallets" data-i18n="nav_wallets">Wallets</option>
         <option value="promos" data-i18n="nav_promos">Promo Codes</option>
         <option value="complaints" data-i18n="nav_complaints">Complaints</option>
@@ -161,6 +172,15 @@
         <div class="card"><div id="topups-out"><p class="loading" data-i18n="loading">Loading…</p></div></div>
       </section>
 
+      <!-- WITHDRAWALS -->
+      <section class="dash-section hidden" id="sec-withdrawals">
+        <div class="section-head">
+          <h2 data-i18n="withdrawals_title">Withdrawal Requests</h2>
+          <button type="button" data-refresh="withdrawals" data-i18n="refresh">Refresh</button>
+        </div>
+        <div class="card"><div id="withdrawals-out"><p class="loading" data-i18n="loading">Loading…</p></div></div>
+      </section>
+
       <!-- WALLETS -->
       <section class="dash-section hidden" id="sec-wallets">
         <div class="section-head"><h2 data-i18n="wallets_title">Wallet Ledger — Driver's account</h2></div>
@@ -170,6 +190,17 @@
           <button class="primary" id="ledger-btn" type="button" data-i18n="ledger_show">Show ledger</button>
           <div id="ledger-out" style="margin-top:12px"></div>
         </div>
+        <div class="card">
+          <h3 data-i18n="refund_title">Refund — credit a wallet</h3>
+          <p class="muted" data-i18n="refund_note">Credits a user's wallet directly (for example, a wrongly charged commission or a cancelled ride). Every refund is written to the audit log.</p>
+          <div class="form-grid">
+            <div><label for="refund-user" data-i18n="refund_user_ph">User ID</label><input id="refund-user" type="number" min="1" placeholder="e.g. 7"></div>
+            <div><label for="refund-amount" data-i18n="refund_amount_ph">Refund amount (Rs)</label><input id="refund-amount" type="number" min="1"></div>
+            <div><label for="refund-reason" data-i18n="refund_reason_ph">Reason</label><input id="refund-reason" maxlength="200"></div>
+          </div>
+          <p class="inline-error" id="refund-err" role="alert"></p>
+          <button class="primary" id="refund-btn" type="button" data-i18n="refund_btn">Credit refund</button>
+        </div>
       </section>
 
       <!-- PROMO CODES -->
@@ -178,7 +209,7 @@
           <h2 data-i18n="promos_title">Promo Codes</h2>
           <button type="button" data-refresh="promos" data-i18n="refresh">Refresh</button>
         </div>
-        <div class="note" data-i18n="promo_note">Promo codes are created here. Applying a discount to the fare comes in a later phase.</div>
+        <div class="note" data-i18n="promo_note">Promo codes are created here. Discounts now apply to fares automatically when a rider enters the code.</div>
         <div class="card">
           <h3 data-i18n="promo_create_title">Create promo code</h3>
           <div class="form-grid">
@@ -306,6 +337,6 @@
 </div>
 
 <div id="toasts" aria-live="polite"></div>
-<script src="/admin.js?v=6"></script>
+<script src="/admin.js?v=7"></script>
 </body>
 </html>

@@ -8,8 +8,10 @@
 <meta name="description" content="Chunian Ride driver app — go online, take ride requests, earn. Cash payment, prepaid wallet top-up.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=6">
+<link rel="stylesheet" href="/style.css?v=7">
 <link rel="icon" type="image/png" href="/favicon.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
 <body>
 <header class="site">
@@ -22,6 +24,13 @@
       </div>
     </a>
     <div class="header-actions">
+      <div class="notif-wrap">
+        <button id="notif-bell" class="notif-bell" type="button" aria-label="Notifications">🔔<span id="notif-badge" class="notif-badge" style="display:none">0</span></button>
+        <div id="notif-panel" class="notif-panel hidden">
+          <div class="notif-head"><b data-i18n="notif_title">Notifications</b><button id="notif-mark-all" class="link-btn" type="button" data-i18n="notif_mark_all">Mark all read</button></div>
+          <div id="notif-list" class="notif-list"></div>
+        </div>
+      </div>
       <div class="lang-switch" role="group" aria-label="Language / زبان">
         <button type="button" class="lang-opt" data-lang="en">EN</button>
         <button type="button" class="lang-opt" data-lang="ur">اردو</button>
@@ -118,6 +127,16 @@
       <p class="muted" id="topup-note"></p>
       <div id="topup-requests"></div>
     </div>
+    <div class="card">
+      <p class="eyebrow">Driver</p>
+      <h2 data-i18n="withdraw_title">Withdraw — driver earnings</h2>
+      <input id="withdraw-amount" type="number" min="100" data-i18n-ph="withdraw_amount_ph" placeholder="Withdrawal amount (Rs) — minimum Rs 100">
+      <input id="withdraw-jazzcash" data-i18n-ph="withdraw_jazzcash_ph" placeholder="Your JazzCash number" inputmode="tel">
+      <p class="form-err" id="withdraw-err" role="alert"></p>
+      <button id="btn-withdraw" data-i18n="withdraw_btn">Request withdrawal</button>
+      <p class="muted" data-i18n="withdraw_note">The amount is held from your wallet when you request. The owner pays manually to your JazzCash and approves — if rejected, the hold is refunded automatically.</p>
+      <div id="withdraw-requests"></div>
+    </div>
   </section>
 
   <!-- ============ PROFILE ============ -->
@@ -139,6 +158,14 @@
       <div class="row" style="margin-top:12px">
         <button id="btn-logout" data-i18n="btn_logout">Logout</button>
       </div>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow">Driver</p>
+      <h2 data-i18n="docs_title">Documents — photo upload</h2>
+      <p class="muted" data-i18n="docs_note">Upload clear photos of your CNIC (front + back) and driving licence. Photos are stored securely and only the owner can see them.</p>
+      <div id="docs-list"></div>
+      <p class="form-err" id="docs-err" role="alert"></p>
     </div>
 
     <div class="card">
@@ -178,8 +205,8 @@
   <button class="nav-btn" data-screen="profile">👤<span data-i18n="nav_profile">Profile</span></button>
 </nav>
 
-<script src="/shared.js?v=6"></script>
-<script src="/driver.js?v=6"></script>
+<script src="/shared.js?v=7"></script>
+<script src="/driver.js?v=7"></script>
 <script>
   $("btn-driver-login").addEventListener("click", (e) => driverLogin(e.currentTarget));
   $("online-btn").addEventListener("click", (e) => toggleOnline(e.currentTarget));
@@ -189,6 +216,7 @@
   $("btn-requests").addEventListener("click", loadRequests);
   $("btn-driver-chat-send").addEventListener("click", (e) => sendDriverChat(e.currentTarget));
   $("btn-topup").addEventListener("click", (e) => topup(e.currentTarget));
+  $("btn-withdraw").addEventListener("click", (e) => withdraw(e.currentTarget));
   $("btn-change-pw").addEventListener("click", (e) => changePassword($("pw-current"), $("pw-new"), $("pw-err"), e.currentTarget));
   $("btn-logout").addEventListener("click", logoutUser);
   $("btn-register").addEventListener("click", (e) => registerDriver(e.currentTarget));

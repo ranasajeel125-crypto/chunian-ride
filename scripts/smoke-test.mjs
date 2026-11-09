@@ -3,6 +3,11 @@
 // Phase 1: covers auth (signup/login/guards), the top-up approval flow,
 // RBAC (403s), transactions (no double-credit / no double-completion),
 // and a restart-persistence check on the same DB file.
+// v2.1: version + PWA, promo discount in fare math, withdrawals (hold /
+// approve / reject-refund with double-action guards), notifications for
+// all three roles, admin refunds (idempotent), rider top-up, document
+// photo upload (admin-only view), phone-only login rate limiting, and
+// the privacy fix (no rider phone in driver requests).
 // Usage: npm run smoke
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -489,6 +494,223 @@ async function main() {
   check("session cookie survives restart (sessions are in the DB)", meAfterRestart.status === 200 && meData.user && meData.user.id === rider.id);
   const topupsAfterRestart = await call("/api/admin/topups", { session: "admin" });
   check("top-up requests survive restart", topupsAfterRestart.topups.some((t) => t.id === topReq.request_id && t.status === "approved"));
+
+  // ================= v2.1 =================
+  const health21 = await call("/api/health");
+  check("version is 2.1.0", health21.version === "2.1.0", `got ${health21.version}`);
+
+  // ---- PWA ----
+  const manifestRes = await fetch(BASE + "/manifest.json");
+  const manifest = await manifestRes.json().catch(() => ({}));
+  check("manifest.json serves 200 + valid JSON (Chunian Ride)", manifestRes.status === 200 && manifest.name === "Chunian Ride" && manifest.short_name === "ChunianRide");
+  check("manifest has 192 + 512 icons", Array.isArray(manifest.icons) && manifest.icons.some((i) => i.sizes === "192x192") && manifest.icons.some((i) => i.sizes === "512x512"));
+  check("manifest display standalone + theme #0a2540", manifest.display === "standalone" && manifest.theme_color === "#0a2540");
+  check("icon 192 serves 200", (await fetch(BASE + "/icons/icon-192.png")).status === 200);
+  check("icon 512 serves 200", (await fetch(BASE + "/icons/icon-512.png")).status === 200);
+  const swRes = await fetch(BASE + "/sw.js");
+  const swText = await swRes.text();
+  check("sw.js serves 200 with versioned cache chunian-ride-v2.1", swRes.status === 200 && swText.includes("chunian-ride-v2.1"));
+  const landing21 = await (await fetch(BASE + "/")).text();
+  check("landing footer says v2.1 + links manifest", landing21.includes("Chunian Ride v2.1") && landing21.includes("/manifest.json"));
+  const riderPage21 = await (await fetch(BASE + "/rider")).text();
+  check("rider page has promo input + notification bell + rider top-up card", riderPage21.includes("promo-code") && riderPage21.includes("notif-bell") && riderPage21.includes("rider-topup-amount"));
+  const driverPage21 = await (await fetch(BASE + "/driver")).text();
+  check("driver page has withdrawal form + documents card + bell", driverPage21.includes("withdraw-amount") && driverPage21.includes("docs-list") && driverPage21.includes("notif-bell"));
+  const adminPage21 = await (await fetch(BASE + "/admin")).text();
+  check("admin page has withdrawals section + refund form + bell", adminPage21.includes("sec-withdrawals") && adminPage21.includes("refund-user") && adminPage21.includes("notif-bell"));
+  const sharedJs21 = await (await fetch(BASE + "/shared.js")).text();
+  check("shared.js registers the service worker + has notification templates", sharedJs21.includes("navigator.serviceWorker.register") && sharedJs21.includes("NOTIF_TEMPLATES"));
+
+  // ---- Promo discount in fare math ----
+  await call("/api/admin/promo-codes", { method: "POST", body: JSON.stringify({ code: "V21PCT", discount_type: "percent", discount_value: 10 }), session: "admin" });
+  const farePct = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Pattoki", vehicle: "car", promo_code: "V21PCT" }) });
+  check("fare with 10% promo: base 980, discount 98, final 882", farePct.base_fare === 980 && farePct.discount_amount === 98 && farePct.suggested_fare === 882, JSON.stringify(farePct));
+  await call("/api/admin/promo-codes", { method: "POST", body: JSON.stringify({ code: "V21FIX", discount_type: "fixed", discount_value: 200 }), session: "admin" });
+  const fareFix = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Pattoki", vehicle: "car", promo_code: "V21FIX" }) });
+  check("fare with fixed Rs 200 promo: base 980, discount 200, final 780", fareFix.base_fare === 980 && fareFix.discount_amount === 200 && fareFix.suggested_fare === 780, JSON.stringify(fareFix));
+  await call("/api/admin/promo-codes", { method: "POST", body: JSON.stringify({ code: "V21EXP", discount_type: "percent", discount_value: 10, valid_from: Date.now() - 86400000, valid_to: Date.now() - 1000 }), session: "admin" });
+  await expectFail("expired promo rejected in fare -> 400", () => call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Pattoki", vehicle: "car", promo_code: "V21EXP" }) }), 400);
+  await expectFail("unknown promo code -> 400", () => call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Pattoki", vehicle: "car", promo_code: "NOPE99" }) }), 400);
+  await call("/api/admin/promo-codes", { method: "POST", body: JSON.stringify({ code: "V21ONE", discount_type: "percent", discount_value: 10, max_uses: 1 }), session: "admin" });
+
+  // The discount must land in the FINAL ride fare, not just the estimate.
+  const promoRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: rider.id, pickup: "Chunian City", destination: "Pattoki", vehicle: "car", proposed_fare: 882, promo_code: "V21PCT" }), session: "rider" });
+  check("promo ride booked: discount 98 stored on the ride", promoRide.discount_amount === 98 && promoRide.suggested_fare === 882 && promoRide.promo_code === "V21PCT", JSON.stringify(promoRide));
+  // Privacy: driver requests must NOT expose the rider's phone number.
+  const openReqs = await call(`/api/drivers/${driverId}/requests`, { session: "driver" });
+  check("driver requests API exposes NO rider phone numbers", openReqs.requests.length > 0 && openReqs.requests.every((r) => !("rider_phone" in r)), `requests=${openReqs.requests.length}`);
+  const promoDetail = await call(`/api/rides/${promoRide.ride_id}`, { session: "rider" });
+  const promoOffer = promoDetail.offers.find((o) => o.status === "pending");
+  check("seeded offer carries the discounted fare Rs 882", promoOffer && promoOffer.fare === 882, `got ${promoOffer && promoOffer.fare}`);
+  const promoAccepted = await call(`/api/rides/${promoRide.ride_id}/offers/${promoOffer.id}/accept`, { method: "POST", body: "{}", session: "rider" });
+  check("promo ride accepted at discounted fare Rs 882", promoAccepted.agreed_fare === 882, `got ${promoAccepted.agreed_fare}`);
+  await call(`/api/rides/${promoRide.ride_id}/start`, { method: "POST", body: "{}", session: "driver" });
+  const promoDone = await call(`/api/rides/${promoRide.ride_id}/complete`, { method: "POST", body: JSON.stringify({ cash_received: true }), session: "driver" });
+  check("promo ride completed: fare 882, platform take 126 (106 + 20), kept 756", promoDone.platform_take === 126 && promoDone.fare === 882 && promoDone.driver_kept === 756, JSON.stringify(promoDone));
+  // Fixed promo ride: offer must be the discounted 780 (cancelled after, not completed).
+  const fixRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: rider.id, pickup: "Chunian City", destination: "Pattoki", vehicle: "car", proposed_fare: 780, promo_code: "V21FIX" }), session: "rider" });
+  const fixDetail = await call(`/api/rides/${fixRide.ride_id}`, { session: "rider" });
+  const fixOffer = fixDetail.offers.find((o) => o.status === "pending");
+  check("fixed-promo ride offer = Rs 780", fixOffer && fixOffer.fare === 780, `got ${fixOffer && fixOffer.fare}`);
+  await call(`/api/rides/${fixRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "rider" });
+  // Max-uses: V21ONE works once, then fails.
+  const oneRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: rider.id, pickup: "Chunian City", destination: "Pattoki", vehicle: "car", proposed_fare: 882, promo_code: "V21ONE" }), session: "rider" });
+  check("max-uses=1 promo books once", !!oneRide.ride_id);
+  await expectFail("max-uses promo second booking -> 400", () => call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: rider.id, pickup: "Chunian City", destination: "Pattoki", vehicle: "car", proposed_fare: 882, promo_code: "V21ONE" }), session: "rider" }), 400);
+  await call(`/api/rides/${oneRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "rider" });
+
+  // ---- Withdrawals (v2.1) — hold / approve / reject-refund, double-action guards ----
+  const wBal0 = (await call(`/api/drivers/${driverId}/wallet`, { session: "driver" })).wallet_balance;
+  const w1 = await call("/api/drivers/me/withdraw", { method: "POST", body: JSON.stringify({ amount: 1000, jazzcash_number: "0301-0000003" }), session: "driver" });
+  check("withdrawal request created (pending, hold)", w1.status === "pending" && !!w1.request_id, JSON.stringify(w1));
+  const wBal1 = (await call(`/api/drivers/${driverId}/wallet`, { session: "driver" })).wallet_balance;
+  check("withdrawal hold deducts Rs 1000 from wallet", wBal1 === wBal0 - 1000, `${wBal0} -> ${wBal1}`);
+  await expectFail("rider cannot call driver withdrawal endpoint -> 403", () => call("/api/drivers/me/withdraw", { method: "POST", body: JSON.stringify({ amount: 100, jazzcash_number: "0309-9999999" }), session: "rider" }), 403);
+  await expectFail("driver cannot withdraw for another driver -> 403", () => call("/api/drivers/me/withdraw", { method: "POST", body: JSON.stringify({ amount: 100, jazzcash_number: "0301-0000003", driver_id: 999001 }), session: "driver" }), 403);
+  await expectFail("withdrawal above balance -> 400", () => call("/api/drivers/me/withdraw", { method: "POST", body: JSON.stringify({ amount: 999999, jazzcash_number: "0301-0000003" }), session: "driver" }), 400);
+  await expectFail("withdrawal below Rs 100 minimum -> 400", () => call("/api/drivers/me/withdraw", { method: "POST", body: JSON.stringify({ amount: 50, jazzcash_number: "0301-0000003" }), session: "driver" }), 400);
+  const wList = await call("/api/admin/withdrawals?status=pending", { session: "admin" });
+  check("admin sees pending withdrawal", wList.withdrawals.some((w) => w.id === w1.request_id && w.amount === 1000));
+  const wApprove = await call(`/api/admin/withdrawals/${w1.request_id}/approve`, { method: "POST", body: "{}", session: "admin" });
+  check("withdrawal approved, hold stays deducted (owner pays manually)", wApprove.status === "approved" && wApprove.wallet_balance === wBal1, `balance Rs ${wApprove.wallet_balance}`);
+  await expectFail("double-approve of withdrawal -> 400", () => call(`/api/admin/withdrawals/${w1.request_id}/approve`, { method: "POST", body: "{}", session: "admin" }), 400);
+  const wBal2 = (await call(`/api/drivers/${driverId}/wallet`, { session: "driver" })).wallet_balance;
+  check("balance unchanged after double-approve attempt", wBal2 === wBal1, `balance Rs ${wBal2}`);
+  const w2 = await call("/api/drivers/me/withdraw", { method: "POST", body: JSON.stringify({ amount: 500, jazzcash_number: "0301-0000003" }), session: "driver" });
+  const wBal3 = (await call(`/api/drivers/${driverId}/wallet`, { session: "driver" })).wallet_balance;
+  check("second withdrawal holds Rs 500", wBal3 === wBal2 - 500, `${wBal2} -> ${wBal3}`);
+  const wReject = await call(`/api/admin/withdrawals/${w2.request_id}/reject`, { method: "POST", body: JSON.stringify({ reason: "test reject" }), session: "admin" });
+  check("withdrawal rejected, hold refunded", wReject.status === "rejected" && wReject.wallet_balance === wBal2, `balance Rs ${wReject.wallet_balance}`);
+  await expectFail("double-reject of withdrawal -> 400", () => call(`/api/admin/withdrawals/${w2.request_id}/reject`, { method: "POST", body: JSON.stringify({ reason: "again" }), session: "admin" }), 400);
+  const wBal4 = (await call(`/api/drivers/${driverId}/wallet`, { session: "driver" })).wallet_balance;
+  check("balance unchanged after double-reject attempt", wBal4 === wBal2, `balance Rs ${wBal4}`);
+  const myW = await call("/api/drivers/me/withdrawals", { session: "driver" });
+  check("driver sees own withdrawal history (2 requests)", myW.withdrawals.length === 2, `got ${myW.withdrawals.length}`);
+  await expectFail("rider cannot list driver withdrawals -> 403", () => call("/api/drivers/me/withdrawals", { session: "rider" }), 403);
+  await expectFail("driver cannot use admin withdrawal list -> 403", () => call("/api/admin/withdrawals", { session: "driver" }), 403);
+
+  // ---- Notifications (v2.1) — rider, driver AND admin feeds ----
+  const riderNotifs = await call("/api/notifications", { session: "rider" });
+  const riderTypes = riderNotifs.notifications.map((n) => n.type);
+  check("rider feed has offer_received + ride_started + ride_completed + scheduled_booked", riderTypes.includes("offer_received") && riderTypes.includes("ride_started") && riderTypes.includes("ride_completed") && riderTypes.includes("scheduled_booked"), riderTypes.join(","));
+  check("rider unread count > 0", riderNotifs.unread_count > 0, `unread=${riderNotifs.unread_count}`);
+  const driverNotifs = await call("/api/notifications", { session: "driver" });
+  const driverTypes = driverNotifs.notifications.map((n) => n.type);
+  check("driver feed has ride_accepted + trip_completed + tip_received + scheduled_request", driverTypes.includes("ride_accepted") && driverTypes.includes("trip_completed") && driverTypes.includes("tip_received") && driverTypes.includes("scheduled_request"), driverTypes.join(","));
+  check("driver feed has topup_approved + topup_rejected + withdrawal_approved + withdrawal_rejected", driverTypes.includes("topup_approved") && driverTypes.includes("topup_rejected") && driverTypes.includes("withdrawal_approved") && driverTypes.includes("withdrawal_rejected"), driverTypes.join(","));
+  const adminNotifs = await call("/api/notifications", { session: "admin" });
+  const adminTypes = adminNotifs.notifications.map((n) => n.type);
+  check("admin feed has topup_requested + withdrawal_requested", adminTypes.includes("topup_requested") && adminTypes.includes("withdrawal_requested"), adminTypes.join(","));
+  check("admin unread count > 0", adminNotifs.unread_count > 0, `unread=${adminNotifs.unread_count}`);
+  const riderUnreadBefore = riderNotifs.unread_count;
+  const firstRiderNotif = riderNotifs.notifications.find((n) => n.is_read === 0);
+  if (firstRiderNotif) {
+    await call(`/api/notifications/${firstRiderNotif.id}/read`, { method: "POST", body: "{}", session: "rider" });
+    const after = await call("/api/notifications", { session: "rider" });
+    check("mark one read drops rider unread count by 1", after.unread_count === riderUnreadBefore - 1, `${riderUnreadBefore} -> ${after.unread_count}`);
+  } else {
+    check("mark one read drops rider unread count by 1", false, "no unread rider notification found");
+  }
+  await call("/api/notifications/read-all", { method: "POST", body: "{}", session: "driver" });
+  const driverAfterAll = await call("/api/notifications", { session: "driver" });
+  check("read-all clears driver unread count", driverAfterAll.unread_count === 0, `unread=${driverAfterAll.unread_count}`);
+  await expectFail("unauthenticated notifications -> 401", () => call("/api/notifications"), 401);
+  const adminNotifId = adminNotifs.notifications[0] && adminNotifs.notifications[0].id;
+  if (adminNotifId) {
+    await expectFail("rider cannot mark an admin notification read -> 404", () => call(`/api/notifications/${adminNotifId}/read`, { method: "POST", body: "{}", session: "rider" }), 404);
+  }
+  // Complaint resolve -> complainant gets complaint_resolved.
+  const complaints = await call("/api/admin/complaints", { session: "admin" });
+  const openComplaint = complaints.complaints.find((c) => c.status === "open");
+  if (openComplaint) {
+    await call(`/api/admin/complaints/${openComplaint.id}/resolve`, { method: "POST", body: "{}", session: "admin" });
+    const riderNotifs3 = await call("/api/notifications", { session: "rider" });
+    check("rider gets complaint_resolved notification", riderNotifs3.notifications.some((n) => n.type === "complaint_resolved"), `complaint #${openComplaint.id}`);
+  } else {
+    check("rider gets complaint_resolved notification", false, "no open complaint found");
+  }
+
+  // ---- Refunds (v2.1, admin-only, idempotent) ----
+  const riderBalBefore = (await call("/api/wallet/me", { session: "rider" })).balance;
+  const refundKey = "smoke-refund-" + Date.now();
+  const refund = await call("/api/admin/refunds", { method: "POST", body: JSON.stringify({ user_id: rider.id, amount: 200, reason: "smoke refund", idempotency_key: refundKey }), session: "admin" });
+  check("refund credits rider wallet +Rs 200", refund.ok === true && refund.wallet_balance === riderBalBefore + 200, `balance ${riderBalBefore} -> ${refund.wallet_balance}`);
+  const refundDup = await call("/api/admin/refunds", { method: "POST", body: JSON.stringify({ user_id: rider.id, amount: 200, reason: "smoke refund", idempotency_key: refundKey }), session: "admin" });
+  check("same idempotency key returns duplicate, no second credit", refundDup.duplicate === true && refundDup.wallet_balance === riderBalBefore + 200, JSON.stringify(refundDup));
+  const riderBalAfter = (await call("/api/wallet/me", { session: "rider" })).balance;
+  check("rider balance unchanged after duplicate refund", riderBalAfter === riderBalBefore + 200, `balance Rs ${riderBalAfter}`);
+  const riderNotifs2 = await call("/api/notifications", { session: "rider" });
+  check("rider gets refund_credited notification", riderNotifs2.notifications.some((n) => n.type === "refund_credited"));
+  await expectFail("rider cannot issue a refund -> 403", () => call("/api/admin/refunds", { method: "POST", body: JSON.stringify({ user_id: rider.id, amount: 100, reason: "nope" }), session: "rider" }), 403);
+  await expectFail("refund to unknown user -> 400", () => call("/api/admin/refunds", { method: "POST", body: JSON.stringify({ user_id: 999001, amount: 100, reason: "nope" }), session: "admin" }), 400);
+
+  // ---- Rider wallet top-up (v2.1) ----
+  const rTop = await call("/api/topup", { method: "POST", body: JSON.stringify({ amount: 500, method: "JazzCash", tid: "SMOKE-RIDER-TID" }), session: "rider" });
+  check("rider top-up creates a pending request", rTop.status === "pending" && !!rTop.request_id, JSON.stringify(rTop));
+  const riderWalletMid = await call("/api/wallet/me", { session: "rider" });
+  check("rider balance unchanged while top-up pending", riderWalletMid.balance === riderBalBefore + 200, `balance Rs ${riderWalletMid.balance}`);
+  check("rider wallet shows pending top-up", riderWalletMid.pending_topups.some((t) => t.id === rTop.request_id));
+  const adminTopups2 = await call("/api/admin/topups?status=pending", { session: "admin" });
+  check("admin queue shows the rider top-up too", adminTopups2.topups.some((t) => t.id === rTop.request_id));
+  const rTopApprove = await call(`/api/admin/topups/${rTop.request_id}/approve`, { method: "POST", body: "{}", session: "admin" });
+  check("rider top-up approved, wallet +Rs 500", rTopApprove.wallet_balance === riderBalBefore + 200 + 500, `balance Rs ${rTopApprove.wallet_balance}`);
+  await expectFail("double-approve of rider top-up -> 400", () => call(`/api/admin/topups/${rTop.request_id}/approve`, { method: "POST", body: "{}", session: "admin" }), 400);
+  const riderWalletFinal = await call("/api/wallet/me", { session: "rider" });
+  check("rider balance still exactly +500 after double-approve", riderWalletFinal.balance === riderBalBefore + 200 + 500, `balance Rs ${riderWalletFinal.balance}`);
+  await expectFail("rider top-up below minimum -> 400", () => call("/api/topup", { method: "POST", body: JSON.stringify({ amount: 100, method: "JazzCash", tid: "SMOKE-LOW2" }), session: "rider" }), 400);
+  await expectFail("unauthenticated top-up -> 401", () => call("/api/topup", { method: "POST", body: JSON.stringify({ amount: 500, method: "JazzCash", tid: "X" }) }), 401);
+
+  // ---- New driver registration + approval (for docs + driver_approved) ----
+  const newDriverRes = await callRaw("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "Smoke Driver 2", phone: "0309-7777777", password: "driver2pass", role: "driver" }) });
+  check("second driver signs up", newDriverRes.status === 200 && !!newDriverRes.data.user.id, `id=${newDriverRes.data.user && newDriverRes.data.user.id}`);
+  saveCookie("driver2", newDriverRes.setCookie);
+  const newDriver = newDriverRes.data.user;
+  const reg = await call("/api/drivers/register", { method: "POST", body: JSON.stringify({ user_id: newDriver.id, vehicle_type: "bike", vehicle_model: "Honda CD 70", plate: "SMOKE-2", cnic: "35202-1111111-1", licence: "LIC-2", vehicle_reg: "REG-2" }), session: "driver2" });
+  check("driver registration submitted (pending)", reg.status === "pending", JSON.stringify(reg));
+  await call(`/api/admin/drivers/${newDriver.id}/approve`, { method: "POST", body: "{}", session: "admin" });
+  const d2Notifs = await call("/api/notifications", { session: "driver2" });
+  check("new driver gets driver_approved notification", d2Notifs.notifications.some((n) => n.type === "driver_approved"), d2Notifs.notifications.map((n) => n.type).join(","));
+
+  // ---- Document photo upload (v2.1) — base64 in Turso, admin-only view ----
+  const tinyJpeg = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDgKKKK+eP2E//Z";
+  const doc1 = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "cnic_front", mime: "image/jpeg", data_url: tinyJpeg }), session: "driver2" });
+  check("driver uploads CNIC front (pending)", doc1.status === "pending" && !!doc1.document_id, JSON.stringify(doc1));
+  const myDocs = await call("/api/drivers/me/documents", { session: "driver2" });
+  check("driver sees own document metadata (no data URL)", myDocs.documents.length === 1 && myDocs.documents[0].doc_type === "cnic_front" && !("data_url" in myDocs.documents[0]), JSON.stringify(myDocs.documents));
+  await expectFail("rider cannot fetch driver documents -> 403", () => call(`/api/admin/drivers/${newDriver.id}/documents`, { session: "rider" }), 403);
+  await expectFail("driver A cannot fetch driver B documents -> 403", () => call(`/api/admin/drivers/${newDriver.id}/documents`, { session: "driver" }), 403);
+  await expectFail("unauthenticated document fetch -> 401", () => call(`/api/admin/drivers/${newDriver.id}/documents`), 401);
+  const adminDocs = await call(`/api/admin/drivers/${newDriver.id}/documents`, { session: "admin" });
+  check("admin fetches driver documents WITH data URL", adminDocs.documents.length === 1 && adminDocs.documents[0].data_url === tinyJpeg, `docs=${adminDocs.documents.length}`);
+  const docApprove = await call(`/api/admin/documents/${doc1.document_id}/approve`, { method: "POST", body: "{}", session: "admin" });
+  check("admin approves document", docApprove.status === "approved");
+  const myDocs2 = await call("/api/drivers/me/documents", { session: "driver2" });
+  check("driver sees document approved", myDocs2.documents[0].status === "approved");
+  const doc2 = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "licence", mime: "image/jpeg", data_url: tinyJpeg }), session: "driver2" });
+  const docReject = await call(`/api/admin/documents/${doc2.document_id}/reject`, { method: "POST", body: "{}", session: "admin" });
+  check("admin rejects document", docReject.status === "rejected");
+  await expectFail("document with bad mime -> 400", () => call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "cnic_back", mime: "image/gif", data_url: tinyJpeg }), session: "driver2" }), 400);
+  await expectFail("oversize document -> 400", () => call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "cnic_back", mime: "image/jpeg", data_url: "data:image/jpeg;base64," + "A".repeat(2100000) }), session: "driver2" }), 400);
+  await expectFail("rider cannot upload documents -> 403", () => call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "cnic_front", mime: "image/jpeg", data_url: tinyJpeg }), session: "rider" }), 403);
+  const d2Notifs2 = await call("/api/notifications", { session: "driver2" });
+  check("driver gets doc_approved + doc_rejected notifications", d2Notifs2.notifications.some((n) => n.type === "doc_approved") && d2Notifs2.notifications.some((n) => n.type === "doc_rejected"), d2Notifs2.notifications.map((n) => n.type).join(","));
+
+  // ---- Security (v2.1) ----
+  // Phone-only rate limiting: 6 wrong logins for the same phone from
+  // ROTATING IPs must still trip the limiter (the old IP+phone key would
+  // let each IP have its own 5 attempts).
+  for (let i = 0; i < 5; i++) {
+    await fetch(BASE + "/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": `10.0.0.${i + 1}` }, body: JSON.stringify({ phone: "0300-0000002", password: "wrong" }) });
+  }
+  const sixthRotating = await fetch(BASE + "/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": "10.0.0.99" }, body: JSON.stringify({ phone: "0300-0000002", password: "wrong" }) });
+  check("phone-only rate limit: 6th wrong login from a NEW IP -> 429", sixthRotating.status === 429, `got ${sixthRotating.status}`);
+  // Role confusion + session requirements.
+  await expectFail("rider token on driver-only endpoint -> 403", () => call(`/api/drivers/${driverId}/wallet`, { session: "rider" }), 403);
+  await expectFail("driver token on admin endpoint -> 403", () => call("/api/admin/withdrawals", { session: "driver" }), 403);
+  await expectFail("admin token on driver-only endpoint -> 403", () => call("/api/drivers/me/withdrawals", { session: "admin" }), 403);
+  await expectFail("unauthenticated withdrawals -> 401", () => call("/api/drivers/me/withdrawals"), 401);
+  await expectFail("unauthenticated documents -> 401", () => call("/api/drivers/me/documents"), 401);
+  await expectFail("unauthenticated admin withdrawals -> 401", () => call("/api/admin/withdrawals"), 401);
 
   console.log(process.exitCode ? "\nSMOKE: FAILURES PRESENT" : "\nSMOKE: ALL CHECKS PASSED");
 }

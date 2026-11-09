@@ -119,6 +119,34 @@ const STRINGS = {
     loading: "Loading…", retry: "Retry",
     scheduled: "Scheduled", distance_km: "{km} km",
     new_driver_label: "New driver", new_rider_label: "New rider",
+    // Promo (v2.1)
+    promo_label: "Promo code (optional)", promo_ph: "e.g. CHUNIAN10",
+    promo_applied: "Promo {code} applied — discount Rs {discount}",
+    fare_base: "Base fare Rs {base}", fare_discount: "Discount Rs {discount}",
+    // Notifications (v2.1)
+    notif_title: "Notifications", notif_empty: "No notifications yet.",
+    notif_mark_all: "Mark all read",
+    // Withdrawals (v2.1)
+    withdraw_title: "Withdraw — driver earnings",
+    withdraw_amount_ph: "Withdrawal amount (Rs) — minimum Rs {min}",
+    withdraw_jazzcash_ph: "Your JazzCash number",
+    withdraw_note: "The amount is held from your wallet when you request. The owner pays manually to your JazzCash and approves — if rejected, the hold is refunded automatically.",
+    withdraw_btn: "Request withdrawal",
+    withdraw_sent: "Withdrawal request #{id} sent (Rs {amount}) — status: pending. The amount is held from your wallet.",
+    withdraw_history: "Withdrawal requests",
+    withdraw_enter_amount: "Please enter an amount.",
+    withdraw_enter_number: "Please enter your JazzCash number.",
+    withdraw_min: "Minimum withdrawal is Rs {min}.",
+    withdraw_exceeds: "Withdrawal is more than your wallet balance.",
+    // Documents — photo upload (v2.1)
+    docs_title: "Documents — photo upload",
+    docs_note: "Upload clear photos of your CNIC (front + back) and driving licence. Photos are stored securely and only the owner can see them.",
+    doc_cnic_front: "CNIC — front", doc_cnic_back: "CNIC — back", doc_licence: "Driving licence",
+    doc_upload: "Upload photo",
+    doc_uploaded: "{doc} uploaded — status: pending approval.",
+    doc_approved: "Approved", doc_rejected: "Rejected — please re-upload", doc_pending: "Pending approval",
+    doc_too_large: "Photo is too large — max 1.5 MB after compression.",
+    doc_bad_type: "Only JPG or PNG photos are allowed.",
   },
   ur: {
     app_name: "چونیاں رائیڈ", tagline: "چونیاں • پتوکی • قصور • لاہور",
@@ -232,8 +260,88 @@ const STRINGS = {
     loading: "لوڈ ہو رہا ہے…", retry: "دوبارہ کوشش کریں",
     scheduled: "شیڈول", distance_km: "{km} کلومیٹر",
     new_driver_label: "نیا ڈرائیور", new_rider_label: "نیا رائیڈر",
+    // Promo (v2.1)
+    promo_label: "پرومو کوڈ (اختیاری)", promo_ph: "مثلاً CHUNIAN10",
+    promo_applied: "پرومو {code} لگ گیا — ڈسکاؤنٹ روپے {discount}",
+    fare_base: "اصل کرایہ روپے {base}", fare_discount: "ڈسکاؤنٹ روپے {discount}",
+    // Notifications (v2.1)
+    notif_title: "اطلاعات", notif_empty: "ابھی کوئی اطلاع نہیں۔",
+    notif_mark_all: "سب پڑھی ہوئی کریں",
+    // Withdrawals (v2.1)
+    withdraw_title: "نکالنا — ڈرائیور کی کمائی",
+    withdraw_amount_ph: "نکالنے کی رقم (روپے) — کم از کم روپے {min}",
+    withdraw_jazzcash_ph: "آپ کا جاز کیش نمبر",
+    withdraw_note: "درخواست پر رقم آپ کے والیٹ سے روک لی جاتی ہے۔ مالک آپ کے جاز کیش پر دستی ادائیگی کر کے منظور کرے گا — مسترد ہونے پر رقم خودبخود واپس آ جائے گی۔",
+    withdraw_btn: "نکالنے کی درخواست بھیجیں",
+    withdraw_sent: "نکالنے کی درخواست #{id} بھیج دی گئی (روپے {amount}) — حالت: زیر التواء۔ رقم آپ کے والیٹ سے روک لی گئی ہے۔",
+    withdraw_history: "نکالنے کی درخواستیں",
+    withdraw_enter_amount: "براہ کرم رقم لکھیں۔",
+    withdraw_enter_number: "براہ کرم اپنا جاز کیش نمبر لکھیں۔",
+    withdraw_min: "کم از کم نکالنا روپے {min} ہے۔",
+    withdraw_exceeds: "نکالنے کی رقم آپ کے والیٹ بیلنس سے زیادہ ہے۔",
+    // Documents — photo upload (v2.1)
+    docs_title: "دستاویزات — تصویر اپ لوڈ کریں",
+    docs_note: "اپنے شناختی کارڈ (سامنے + پیچھے) اور ڈرائیونگ لائسنس کی واضح تصویریں اپ لوڈ کریں۔ تصویریں محفوظ طریقے سے رکھی جاتی ہیں اور صرف مالک دیکھ سکتا ہے۔",
+    doc_cnic_front: "شناختی کارڈ — سامنے", doc_cnic_back: "شناختی کارڈ — پیچھے", doc_licence: "ڈرائیونگ لائسنس",
+    doc_upload: "تصویر اپ لوڈ کریں",
+    doc_uploaded: "{doc} اپ لوڈ ہو گئی — حالت: منظوری زیر التواء۔",
+    doc_approved: "منظور شدہ", doc_rejected: "مسترد — دوبارہ اپ لوڈ کریں", doc_pending: "منظوری زیر التواء",
+    doc_too_large: "تصویر بہت بڑی ہے — کمپریشن کے بعد زیادہ سے زیادہ 1.5 MB۔",
+    doc_bad_type: "صرف JPG یا PNG تصویر چلتی ہے۔",
   },
 };
+
+// ---------- Notification templates (v2.1) ----------
+// The API returns {type, params}; the client renders localized title/body.
+// Param names must match the server's notify() calls in server/index.mjs
+// and server/db.mjs. Any {placeholder} with no value is dropped on render.
+const NOTIF_TEMPLATES = {
+  en: {
+    offer_received: { title: "New offer on Ride #{ride}", body: "{driver} offered Rs {fare}." },
+    ride_accepted: { title: "Ride #{ride} accepted", body: "Agreed fare Rs {fare} — go to the pickup." },
+    ride_started: { title: "Your trip has started", body: "Ride #{ride} is on the way." },
+    ride_completed: { title: "Ride complete", body: "Thank you! Ride #{ride} is complete — fare Rs {fare}." },
+    trip_completed: { title: "Trip complete", body: "Ride #{ride} complete — fare Rs {fare}, you kept Rs {kept}." },
+    tip_received: { title: "Tip received", body: "Tip Rs {tip} on Ride #{ride} — 100% yours, no commission." },
+    topup_approved: { title: "Top-up approved", body: "Rs {amount} added to your wallet (TID {tid})." },
+    topup_rejected: { title: "Top-up rejected", body: "Rs {amount} was not credited. {reason}" },
+    topup_requested: { title: "New top-up request", body: "{name} requested Rs {amount} ({method}, TID {tid})." },
+    driver_approved: { title: "Driver account approved", body: "You can go online now and take rides." },
+    driver_blocked: { title: "Driver account blocked", body: "Your driver account was blocked. Contact the owner." },
+    withdrawal_requested: { title: "New withdrawal request", body: "{name} requested Rs {amount} to JazzCash {number}." },
+    withdrawal_approved: { title: "Withdrawal approved", body: "Rs {amount} will be paid to your JazzCash {number}." },
+    withdrawal_rejected: { title: "Withdrawal rejected", body: "Rs {amount} refunded to your wallet. {reason}" },
+    complaint_resolved: { title: "Complaint resolved", body: "Your complaint #{id} has been resolved." },
+    scheduled_booked: { title: "Scheduled ride booked", body: "Ride #{ride} booked for {when}." },
+    scheduled_request: { title: "Scheduled ride request", body: "Ride #{ride} — {pickup} → {destination} on {when}." },
+    refund_credited: { title: "Refund credited", body: "Rs {amount} refunded to your wallet. {reason}" },
+    doc_approved: { title: "Document approved", body: "Your {doc} was approved." },
+    doc_rejected: { title: "Document rejected", body: "Your {doc} was rejected. Please re-upload." },
+  },
+  ur: {
+    offer_received: { title: "رائڈ #{ride} پر نئی پیشکش", body: "{driver} نے روپے {fare} کی پیشکش کی۔" },
+    ride_accepted: { title: "رائڈ #{ride} قبول ہو گئی", body: "طے شدہ کرایہ روپے {fare} — پک اپ پر جائیں۔" },
+    ride_started: { title: "آپ کا سفر شروع ہو گیا", body: "رائڈ #{ride} راستے میں ہے۔" },
+    ride_completed: { title: "رائڈ مکمل", body: "شکریہ! رائیڈ #{ride} مکمل — کرایہ روپے {fare}۔" },
+    trip_completed: { title: "ٹرپ مکمل", body: "رائڈ #{ride} مکمل — کرایہ روپے {fare}، آپ نے روپے {kept} رکھے۔" },
+    tip_received: { title: "ٹپ مل گئی", body: "رائڈ #{ride} پر ٹپ روپے {tip} — 100% آپ کی، کوئی کمیشن نہیں۔" },
+    topup_approved: { title: "ٹاپ اپ منظور", body: "روپے {amount} آپ کے والیٹ میں آ گئے (ٹی آئی ڈی {tid})۔" },
+    topup_rejected: { title: "ٹاپ اپ مسترد", body: "روپے {amount} جمع نہیں ہوئے۔ {reason}" },
+    topup_requested: { title: "نئی ٹاپ اپ درخواست", body: "{name} نے روپے {amount} کی درخواست کی ({method}، ٹی آئی ڈی {tid})۔" },
+    driver_approved: { title: "ڈرائیور اکاؤنٹ منظور", body: "اب آپ آن لائن ہو کر رائیڈز لے سکتے ہیں۔" },
+    driver_blocked: { title: "ڈرائیور اکاؤنٹ بلاک", body: "آپ کا ڈرائیور اکاؤنٹ بلاک کر دیا گیا۔ مالک سے رابطہ کریں۔" },
+    withdrawal_requested: { title: "نئی نکالنے کی درخواست", body: "{name} نے روپے {amount} جاز کیش {number} پر مانگے۔" },
+    withdrawal_approved: { title: "نکالنا منظور", body: "روپے {amount} آپ کے جاز کیش {number} پر بھیجے جائیں گے۔" },
+    withdrawal_rejected: { title: "نکالنا مسترد", body: "روپے {amount} آپ کے والیٹ میں واپس آ گئے۔ {reason}" },
+    complaint_resolved: { title: "شکایت حل ہو گئی", body: "آپ کی شکایت #{id} حل ہو گئی۔" },
+    scheduled_booked: { title: "شیڈول رائیڈ بک ہو گئی", body: "رائڈ #{ride} {when} کے لیے بک ہو گئی۔" },
+    scheduled_request: { title: "شیڈول رائیڈ کی درخواست", body: "رائڈ #{ride} — {pickup} سے {destination}، {when}۔" },
+    refund_credited: { title: "ریفنڈ جمع ہو گیا", body: "روپے {amount} آپ کے والیٹ میں واپس آ گئے۔ {reason}" },
+    doc_approved: { title: "دستاویز منظور", body: "آپ کی {doc} منظور ہو گئی۔" },
+    doc_rejected: { title: "دستاویز مسترد", body: "آپ کی {doc} مسترد ہو گئی۔ براہ کرم دوبارہ اپ لوڈ کریں۔" },
+  },
+};
+
 let LANG = localStorage.getItem("cr_lang") || "en";
 if (!STRINGS[LANG]) LANG = "en";
 function t(key, vars) {
@@ -369,6 +477,31 @@ const ERR_MAP = {
   "admin not found": { en: "Admin not found.", ur: "ایڈمن نہیں ملا۔" },
   "topup request not found": { en: "Top-up request not found.", ur: "ٹاپ اپ درخواست نہیں ملی۔" },
   "topup request already reviewed": { en: "Top-up request already reviewed.", ur: "ٹاپ اپ درخواست پہلے سے جائزہ شدہ ہے۔" },
+  // v2.1
+  "minimum top-up not met": { en: "The top-up amount is below the minimum.", ur: "ٹاپ اپ رقم کم از کم حد سے کم ہے۔" },
+  "minimum withdrawal not met": { en: "The withdrawal amount is below the minimum.", ur: "نکالنے کی رقم کم از کم حد سے کم ہے۔" },
+  "withdrawal amount is more than your wallet balance": { en: "Withdrawal is more than your wallet balance.", ur: "نکالنے کی رقم آپ کے والیٹ بیلنس سے زیادہ ہے۔" },
+  "withdrawal request not found": { en: "Withdrawal request not found.", ur: "نکالنے کی درخواست نہیں ملی۔" },
+  "withdrawal request already reviewed": { en: "Withdrawal request already reviewed.", ur: "نکالنے کی درخواست پہلے سے جائزہ شدہ ہے۔" },
+  "JazzCash number is required": { en: "JazzCash number is required.", ur: "جاز کیش نمبر ضروری ہے۔" },
+  "promo code is required": { en: "Promo code is required.", ur: "پرومو کوڈ ضروری ہے۔" },
+  "promo code not found": { en: "Promo code not found.", ur: "پرومو کوڈ نہیں ملا۔" },
+  "promo code is not active": { en: "Promo code is not active.", ur: "پرومو کوڈ فعال نہیں ہے۔" },
+  "promo code is not valid yet": { en: "Promo code is not valid yet.", ur: "پرومو کوڈ ابھی لاگو نہیں ہوا۔" },
+  "promo code has expired": { en: "Promo code has expired.", ur: "پرومو کوڈ کی مدت ختم ہو گئی ہے۔" },
+  "promo code has reached its maximum uses": { en: "Promo code has reached its maximum uses.", ur: "پرومو کوڈ کی حد مکمل ہو چکی ہے۔" },
+  "invalid document type": { en: "Invalid document type.", ur: "دستاویز کی قسم غلط ہے۔" },
+  "only JPG or PNG photos are allowed": { en: "Only JPG or PNG photos are allowed.", ur: "صرف JPG یا PNG تصویر چلتی ہے۔" },
+  "document is too large — max 1.5 MB": { en: "Document is too large — max 1.5 MB.", ur: "دستاویز بہت بڑی ہے — زیادہ سے زیادہ 1.5 MB۔" },
+  "document not found": { en: "Document not found.", ur: "دستاویز نہیں ملی۔" },
+  "notification not found": { en: "Notification not found.", ur: "اطلاع نہیں ملی۔" },
+  "user_id and a refund amount are required": { en: "User ID and a refund amount are required.", ur: "یوزر آئی ڈی اور ریفنڈ رقم ضروری ہیں۔" },
+  "Sirf driver apni withdrawal bhej sakta hai": { en: "Only a driver can request a withdrawal.", ur: "صرف ڈرائیور ہی نکالنے کی درخواست بھیج سکتا ہے۔" },
+  "Sirf apni withdrawal bhej sakte hain": { en: "You can only request a withdrawal for yourself.", ur: "آپ صرف اپنی نکالنے کی درخواست بھیج سکتے ہیں۔" },
+  "Sirf driver apni withdrawals dekh sakta hai": { en: "Only a driver can see their own withdrawals.", ur: "صرف ڈرائیور ہی اپنی نکالنے کی درخواستیں دیکھ سکتا ہے۔" },
+  "Sirf driver apni documents upload kar sakta hai": { en: "Only a driver can upload their own documents.", ur: "صرف ڈرائیور ہی اپنی دستاویزات اپ لوڈ کر سکتا ہے۔" },
+  "Sirf driver apni documents dekh sakta hai": { en: "Only a driver can see their own documents.", ur: "صرف ڈرائیور ہی اپنی دستاویزات دیکھ سکتا ہے۔" },
+  "Sirf user account ka top-up yahan hota hai": { en: "Only a user account can top up here.", ur: "یہاں صرف صارف اکاؤنٹ کا ٹاپ اپ ہوتا ہے۔" },
 };
 function translateError(msg) {
   const m = ERR_MAP[msg];
@@ -454,3 +587,77 @@ function addPlacePins(map, places, onPick) {
   });
   return markers;
 }
+
+// ---------- Notifications (v2.1, in-app feed) ----------
+// Renders a notification from its type + params in the current language.
+// The doc param holds a doc_type key (cnic_front/cnic_back/licence) —
+// translate it through the doc_* keys. The when param is an ISO date.
+function notifText(n) {
+  const tpl = (NOTIF_TEMPLATES[LANG] && NOTIF_TEMPLATES[LANG][n.type]) || NOTIF_TEMPLATES.en[n.type];
+  if (!tpl) return { title: n.type, body: "" };
+  const vars = { ...(n.params || {}) };
+  if (vars.doc) vars.doc = t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", licence: "doc_licence" }[vars.doc] || "doc_licence");
+  if (vars.when) { try { vars.when = fmtSched(new Date(vars.when).getTime()); } catch { /* keep raw */ } }
+  let title = tpl.title, body = tpl.body;
+  for (const [k, v] of Object.entries(vars)) {
+    title = title.split("{" + k + "}").join(String(v));
+    body = body.split("{" + k + "}").join(String(v));
+  }
+  return { title, body: body.replace(/\{[a-z_]+\}/g, "").replace(/\s+([.,])/g, "$1").trim() };
+}
+// Fetches the feed and updates the badge + panel list (if the panel exists).
+async function loadNotifications() {
+  const badge = $("notif-badge"), list = $("notif-list");
+  let data;
+  try { data = await api("/api/notifications"); } catch { return; }
+  if (badge) {
+    badge.textContent = data.unread_count > 99 ? "99+" : String(data.unread_count);
+    badge.style.display = data.unread_count ? "" : "none";
+  }
+  if (list) {
+    list.innerHTML = "";
+    if (!data.notifications.length) {
+      list.innerHTML = `<p class="muted">${escapeHtml(t("notif_empty"))}</p>`;
+    } else {
+      for (const n of data.notifications) {
+        const { title, body } = notifText(n);
+        const item = document.createElement("div");
+        item.className = "notif-item" + (n.is_read ? "" : " unread");
+        item.innerHTML = `<b>${escapeHtml(title)}</b><span>${escapeHtml(body)}</span><time>${escapeHtml(new Date(n.created_at).toLocaleString())}</time>`;
+        item.addEventListener("click", async () => {
+          if (!n.is_read) {
+            try { await api("/api/notifications/" + n.id + "/read", { method: "POST", body: "{}" }); } catch {}
+            loadNotifications();
+          }
+        });
+        list.appendChild(item);
+      }
+    }
+  }
+}
+let notifTimer = null;
+function initNotifications() {
+  const bell = $("notif-bell"), panel = $("notif-panel");
+  if (!bell || !panel) return;
+  bell.addEventListener("click", (e) => {
+    e.stopPropagation();
+    panel.classList.toggle("hidden");
+    if (!panel.classList.contains("hidden")) loadNotifications();
+  });
+  document.addEventListener("click", (e) => { if (!panel.contains(e.target)) panel.classList.add("hidden"); });
+  const markAll = $("notif-mark-all");
+  if (markAll) markAll.addEventListener("click", async () => {
+    try { await api("/api/notifications/read-all", { method: "POST", body: "{}" }); } catch {}
+    loadNotifications();
+  });
+  loadNotifications();
+  if (!notifTimer) notifTimer = setInterval(loadNotifications, 15000);
+}
+
+// ---------- PWA (v2.1) ----------
+function registerServiceWorker() {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+}
+document.addEventListener("DOMContentLoaded", registerServiceWorker);
