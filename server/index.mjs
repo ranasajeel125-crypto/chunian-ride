@@ -19,6 +19,7 @@
 //   double ride completion).
 import express from "express";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -136,6 +137,17 @@ function canViewRide(ride, auth) {
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, app: "chunian-ride", version: "2.2.0", db: usingTurso ? "turso" : "local-sqlite" });
+});
+
+// App update check (v2.1): single source of truth for the latest APK.
+// The Android app polls this on launch; no auth, no DB, no other logic.
+app.get("/api/app-version", (req, res) => {
+  try {
+    const v = JSON.parse(fs.readFileSync(path.join(root, "public", "app-version.json"), "utf8"));
+    res.json({ ok: true, ...v });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "version info unavailable" });
+  }
 });
 
 app.get("/api/places", async (req, res) => {
