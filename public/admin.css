@@ -3,7 +3,7 @@
   --blue: #0b5ed7;
   --blue-dark: #0a4cb0;
   --blue-mid: #2f7fe0;
-  --navy: #0a2540;
+  --navy: #0D1748;
   --navy-2: #10365c;
   --sky-050: #eef5ff;
   --sky-100: #dbeafe;
@@ -43,6 +43,7 @@ a { color: var(--blue); }
   position: sticky; top: 0; z-index: 20;
 }
 .brand { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.brand .logo-img { width: 38px; height: 38px; border-radius: 10px; flex: none; box-shadow: 0 1px 4px rgba(0, 0, 0, .18); }
 .brand-mark {
   width: 38px; height: 38px; border-radius: 10px; flex: none;
   background: var(--blue); color: #fff;

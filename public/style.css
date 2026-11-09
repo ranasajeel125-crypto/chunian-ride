@@ -6,7 +6,7 @@
   --blue: #0b5ed7;
   --blue-dark: #0a4cb0;
   --blue-mid: #2f7fe0;
-  --navy: #0a2540;
+  --navy: #0D1748;
   --navy-2: #10365c;
   --sky-050: #eef5ff;
   --sky-100: #dbeafe;
@@ -160,6 +160,7 @@ main.landing-main { padding-top: 0; }
 .hero > * { position: relative; z-index: 1; }
 .hero h1 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
 .hero p { margin: 0; opacity: .93; font-size: 13.5px; }
+.hero .tagline { margin: 10px 0 0; font-size: 12px; font-weight: 800; letter-spacing: .18em; color: #66c3fe; }
 .hero .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
 .hero .chip {
   background: rgba(255, 255, 255, .16);

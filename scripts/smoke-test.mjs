@@ -526,7 +526,7 @@ async function main() {
   const manifest = await manifestRes.json().catch(() => ({}));
   check("manifest.json serves 200 + valid JSON (Chunian Ride)", manifestRes.status === 200 && manifest.name === "Chunian Ride" && manifest.short_name === "ChunianRide");
   check("manifest has 192 + 512 icons", Array.isArray(manifest.icons) && manifest.icons.some((i) => i.sizes === "192x192") && manifest.icons.some((i) => i.sizes === "512x512"));
-  check("manifest display standalone + theme #0a2540", manifest.display === "standalone" && manifest.theme_color === "#0a2540");
+  check("manifest display standalone + theme #0D1748", manifest.display === "standalone" && manifest.theme_color === "#0D1748");
   check("icon 192 serves 200", (await fetch(BASE + "/icons/icon-192.png")).status === 200);
   check("icon 512 serves 200", (await fetch(BASE + "/icons/icon-512.png")).status === 200);
   const swRes = await fetch(BASE + "/sw.js");
