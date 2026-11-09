@@ -44,6 +44,10 @@ import {
   approveWithdrawal,
   rejectWithdrawal,
   createRefund,
+  getDocChecklist,
+  pilotLocked,
+  pilotAreaError,
+  pilotCap,
 } from "./db.mjs";
 import {
   hashPassword,
@@ -131,7 +135,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "2.1.0", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.2.0", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 app.get("/api/places", async (req, res) => {
@@ -149,6 +153,10 @@ app.get("/api/settings", async (req, res) => {
 app.post("/api/fare", async (req, res) => {
   const { pickup, destination, vehicle, distance_km, promo_code } = req.body || {};
   if (!VEHICLES.includes(vehicle)) return res.status(400).json({ error: "vehicle must be bike, rickshaw, car or ac_car" });
+  // Pilot lock (v2.2): Chunian City only while pilot mode is ON.
+  const s = await getSettings();
+  const areaErr = pilotAreaError(s, pickup, destination);
+  if (areaErr) return res.status(400).json({ error: areaErr });
   let km = num(distance_km, 0);
   let estimated = false;
   if (!km) {
@@ -157,7 +165,6 @@ app.post("/api/fare", async (req, res) => {
     km = d.km;
     estimated = d.estimated;
   }
-  const s = await getSettings();
   const base = fareFor(s, vehicle, km);
   let discount = 0, promo = null;
   if (promo_code) {
@@ -180,6 +187,33 @@ app.post("/api/auth/signup", async (req, res) => {
   if (pwError) return res.status(400).json({ error: pwError });
   const cleanPhone = normalizePhone(phone);
   const wantRole = role === "driver" ? "driver" : "rider";
+  // Pilot mode (v2.2): public signup is CLOSED — only whitelisted phones
+  // may register, and only up to the pilot caps. Login of existing
+  // accounts is unaffected (see /api/auth/login).
+  let whitelistEntry = null;
+  if (String((await getSettings()).pilot_mode) === "1") {
+    const wl = await client.execute({
+      sql: "SELECT * FROM pilot_whitelist WHERE phone = ? AND role = ?",
+      args: [cleanPhone, wantRole],
+    });
+    whitelistEntry = wl.rows.find((r) => r.status === "pending" || r.status === "approved") || null;
+    if (!whitelistEntry) {
+      return res.status(403).json({ error: "Pilot registration sirf whitelist par hai — owner se rabta karein" });
+    }
+    // Live cap re-check at signup time (the whitelist-add check is the
+    // first layer; this one guards the actual account creation).
+    if (whitelistEntry.status === "pending") {
+      const s = await getSettings();
+      const cap = pilotCap(wantRole, s);
+      const approvedCount = await client.execute({
+        sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status = 'approved'",
+        args: [wantRole],
+      });
+      if (Number(approvedCount.rows[0].n) >= cap) {
+        return res.status(403).json({ error: "Pilot limit poori ho gayi — registration band hai" });
+      }
+    }
+  }
   const existing = await client.execute({ sql: "SELECT * FROM users WHERE phone = ?", args: [cleanPhone] });
   if (existing.rows.length) {
     const ex = existing.rows[0];
@@ -201,6 +235,9 @@ app.post("/api/auth/signup", async (req, res) => {
   });
   const userId = Number(r.lastInsertRowid);
   await client.execute({ sql: "INSERT OR IGNORE INTO wallets(user_id, balance, updated_at) VALUES (?, 0, ?)", args: [userId, now()] });
+  if (whitelistEntry) {
+    await client.execute({ sql: "UPDATE pilot_whitelist SET status='approved' WHERE id = ?", args: [whitelistEntry.id] });
+  }
   if (wantRole === "rider") {
     await client.execute({ sql: "INSERT OR IGNORE INTO passengers(user_id, created_at) VALUES (?, ?)", args: [userId, now()] });
   }
@@ -431,6 +468,15 @@ app.post("/api/drivers/:id/online", requireAuth, requireSelfOrAdmin((req) => req
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
   if (d.rows[0].status !== "approved") return res.status(403).json({ error: "driver is not approved yet" });
+  // Pilot gate (v2.2): an approved driver whose documents are not all
+  // verified cannot go online — approve is gated the same way, so this
+  // also catches drivers approved before the gate existed.
+  if (online) {
+    const checklist = await getDocChecklist(client, num(req.params.id));
+    if (!checklist.all) {
+      return res.status(403).json({ error: "Driver ki documents verify nahi — pehle documents approve karwain" });
+    }
+  }
   await client.execute({
     sql: "UPDATE drivers SET online = ?, lat = COALESCE(?, lat), lng = COALESCE(?, lng) WHERE user_id = ?",
     args: [online ? 1 : 0, lat != null ? num(lat) : null, lng != null ? num(lng) : null, num(req.params.id)],
@@ -476,11 +522,21 @@ async function createTopupRequest(userId, userName, { amount, method, tid }) {
   const s = await getSettings();
   const minTopup = Number(s.min_topup || 500);
   if (amt < minTopup) throw new Error("minimum top-up not met");
-  const r = await client.execute({
-    sql: "INSERT INTO topup_requests(driver_id, amount, method, tid, note, status, created_at) VALUES (?, ?, ?, ?, 'Wallet top-up request', 'pending', ?)",
-    args: [num(userId), amt, method || "JazzCash", tid || "", now()],
+  // Request + audit in ONE transaction: a top-up request must never exist
+  // without its audit entry (v2.2 financial-audit completeness).
+  const requestId = await withTx(async (tx) => {
+    const r = await tx.execute({
+      sql: "INSERT INTO topup_requests(driver_id, amount, method, tid, note, status, created_at) VALUES (?, ?, ?, ?, 'Wallet top-up request', 'pending', ?)",
+      args: [num(userId), amt, method || "JazzCash", tid || "", now()],
+    });
+    const id = Number(r.lastInsertRowid);
+    await writeAudit(tx, {
+      actorId: num(userId), actorRole: "user", action: "topup_request",
+      targetType: "topup_request", targetId: id,
+      detail: `Top-up request Rs ${amt} (${method || "JazzCash"}, TID ${tid || "—"}) — pending owner approval`,
+    });
+    return id;
   });
-  const requestId = Number(r.lastInsertRowid);
   await notifyAdmins(client, { type: "topup_requested", params: { name: userName || "", amount: amt, method: method || "JazzCash", tid: tid || "" } });
   return { request_id: requestId, status: "pending", amount: amt, wallet_balance: await getWalletBalance(num(userId)) };
 }
@@ -576,6 +632,10 @@ app.post("/api/rides", requireAuth, async (req, res) => {
   if (!rider_id || !pickup || !destination || !VEHICLES.includes(vehicle)) {
     return res.status(400).json({ error: "rider_id, pickup, destination and vehicle are required" });
   }
+  // Pilot lock (v2.2): Chunian City only while pilot mode is ON.
+  const s0 = await getSettings();
+  const areaErr = pilotAreaError(s0, pickup, destination);
+  if (areaErr) return res.status(400).json({ error: areaErr });
   // Scheduled ride (book for later, inDrive-style): optional epoch ms.
   // Must be in the future and within the next 7 days.
   let sched = null;
@@ -592,7 +652,7 @@ app.post("/api/rides", requireAuth, async (req, res) => {
     km = d.km;
     estimated = d.estimated;
   }
-  const s = await getSettings();
+  const s = s0;
   const baseSuggested = fareFor(s, vehicle, km);
   let promo = null, discount = 0;
   if (promo_code) {
@@ -621,6 +681,12 @@ app.post("/api/rides", requireAuth, async (req, res) => {
           args: [promo.id],
         });
         if (Number(up.rowsAffected) !== 1) throw new Error("promo code has reached its maximum uses");
+        // Financial audit (v2.2): the discount applied to this ride.
+        await writeAudit(tx, {
+          actorId: num(rider_id), actorRole: "user", action: "promo_applied",
+          targetType: "ride", targetId: id,
+          detail: `Promo ${promo.code}: discount Rs ${discount} on base fare Rs ${baseSuggested} (ride #${id})`,
+        });
       }
       await writeRideHistory(tx, id, null, "requested", num(rider_id));
       return id;
@@ -837,6 +903,12 @@ app.post("/api/rides/:id/complete", requireAuth, async (req, res) => {
         note: `Ride ${req.params.id}: commission ${s.commission_pct}% + booking fee Rs ${s.booking_fee}`,
         rideId: num(req.params.id),
       });
+      // Financial audit (v2.2): the fare settlement + commission deduction.
+      await writeAudit(tx, {
+        actorId: driverId, actorRole: "driver", action: "ride_settlement",
+        targetType: "ride", targetId: num(req.params.id),
+        detail: `Ride #${req.params.id} completed — fare Rs ${fare}, commission Rs ${take} deducted, driver kept Rs ${fare - take}`,
+      });
       await writeRideHistory(tx, num(req.params.id), "ongoing", "completed", driverId);
       return bal;
     });
@@ -864,8 +936,9 @@ app.post("/api/rides/:id/cancel", requireAuth, async (req, res) => {
   if (!ride) return;
   if (!isRideParticipant(ride, req.auth)) return res.status(403).json({ error: "Sirf is ride ka rider ya driver cancel kar sakta hai" });
   if (ride.status === "completed") return res.status(400).json({ error: "completed ride cannot be cancelled" });
+  const reason = String((req.body || {}).reason || "").slice(0, 200);
   await withTx(async (tx) => {
-    await tx.execute({ sql: "UPDATE rides SET status='cancelled' WHERE id = ?", args: [num(req.params.id)] });
+    await tx.execute({ sql: "UPDATE rides SET status='cancelled', cancel_reason = ? WHERE id = ?", args: [reason, num(req.params.id)] });
     await writeRideHistory(tx, num(req.params.id), ride.status, "cancelled", req.auth.ownerId);
   });
   res.json({ status: "cancelled" });
@@ -892,6 +965,13 @@ app.post("/api/rides/:id/tip", requireAuth, async (req, res) => {
   await client.execute({
     sql: "UPDATE rides SET tip_amount = ? WHERE id = ? AND tip_amount = 0",
     args: [tip, num(req.params.id)],
+  });
+  // Financial audit (v2.2): the tip is recorded even though no wallet
+  // balance moves (cash, 100% driver).
+  await writeAudit(client, {
+    actorId: num(rider_id), actorRole: "user", action: "tip_recorded",
+    targetType: "ride", targetId: num(req.params.id),
+    detail: `Tip Rs ${tip} on ride #${req.params.id} (cash, 100% driver, no commission)`,
   });
   await notify(client, { userId: Number(ride.driver_id), role: "user", type: "tip_received", params: { ride: num(req.params.id), tip }, rideId: num(req.params.id) });
   res.json({ ride_id: num(req.params.id), tip, commission_on_tip: 0, note: "Tip 100% driver ko — is par koi commission nahi." });
@@ -953,6 +1033,14 @@ app.post("/api/rides/:id/sos", requireAuth, async (req, res) => {
     sql: "INSERT INTO complaints(ride_id, user_id, kind, message, created_at) VALUES (?, ?, 'sos', ?, ?)",
     args: [num(req.params.id), req.auth.ownerId, message || "SOS pressed", now()],
   });
+  // SOS must reach the owner immediately: admin notification + audit entry
+  // (v2.2 — the old handler only stored the complaint row).
+  await notifyAdmins(client, { type: "sos_alert", params: { ride: num(req.params.id), message: message || "SOS pressed" }, rideId: num(req.params.id) });
+  await writeAudit(client, {
+    actorId: req.auth.ownerId, actorRole: req.auth.ownerType === "admin" ? "admin" : "user",
+    action: "sos_alert", targetType: "ride", targetId: num(req.params.id),
+    detail: `SOS on ride #${req.params.id}: ${message || "SOS pressed"}`,
+  });
   res.json({ sos: true, police: "15", rescue: "1122", message: "SOS logged. Call Police 15 or Rescue 1122 now." });
 });
 
@@ -970,10 +1058,35 @@ app.get("/api/admin/drivers", requireAdmin, async (req, res) => {
   const rows = await client.execute({
     sql: `SELECT d.*, u.name, u.phone, u.rating, u.rating_count, u.demo, u.status AS user_status FROM drivers d JOIN users u ON u.id = d.user_id ORDER BY d.created_at DESC`,
   });
-  res.json({ drivers: rows.rows });
+  // Per-driver document checklist (v2.2): the admin list shows CNIC /
+  // licence / vehicle ✓/✗ without opening each driver's documents.
+  const docs = await client.execute({ sql: "SELECT driver_id, doc_type, status FROM documents" });
+  const byDriver = {};
+  for (const doc of docs.rows) {
+    (byDriver[doc.driver_id] = byDriver[doc.driver_id] || []).push(doc);
+  }
+  const drivers = rows.rows.map((x) => {
+    const approved = new Set((byDriver[x.user_id] || []).filter((d) => d.status === "approved").map((d) => d.doc_type));
+    const cnic = approved.has("cnic") || (approved.has("cnic_front") && approved.has("cnic_back"));
+    const licence = approved.has("licence");
+    const vehicle = approved.has("vehicle");
+    return { ...x, doc_checklist: { cnic, licence, vehicle, all: cnic && licence && vehicle } };
+  });
+  res.json({ drivers });
 });
 
 app.post("/api/admin/drivers/:id/approve", requireAdmin, async (req, res) => {
+  // Document verification gate (v2.2): CNIC + licence + vehicle must ALL
+  // be approved before a driver can be activated. Fails with the missing
+  // list so the owner knows exactly what is left.
+  const checklist = await getDocChecklist(client, num(req.params.id));
+  if (!checklist.all) {
+    return res.status(400).json({
+      error: `Driver ki documents verify nahi — missing: ${checklist.missing.join(", ")}. Pehle documents approve karein.`,
+      missing_docs: checklist.missing,
+      doc_checklist: { cnic: checklist.cnic, licence: checklist.licence, vehicle: checklist.vehicle },
+    });
+  }
   await client.execute({ sql: "UPDATE drivers SET status='approved', documents_status='approved' WHERE user_id = ?", args: [num(req.params.id)] });
   await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "driver_approve", targetType: "driver", targetId: num(req.params.id), detail: "Driver documents approved" });
   await notify(client, { userId: num(req.params.id), role: "user", type: "driver_approved", params: {} });
@@ -1057,6 +1170,184 @@ app.get("/api/admin/overview", requireAdmin, async (req, res) => {
   });
 });
 
+// ---- Pilot live monitoring + pilot report (v2.2) ----
+// Live board for the controlled pilot: who is in, what is happening right
+// now, what needs the owner's attention. Admin-only.
+app.get("/api/admin/pilot-status", requireAdmin, async (req, res) => {
+  const s = await getSettings();
+  const dayAgo = now() - 86400000;
+  const one = async (sql, args = []) => Number((await client.execute({ sql, args })).rows[0].n);
+  const rideRows = await client.execute({
+    sql: "SELECT status, COUNT(*) AS n FROM rides WHERE created_at >= ? GROUP BY status",
+    args: [dayAgo],
+  });
+  const ridesToday = { requested: 0, accepted: 0, ongoing: 0, completed: 0, cancelled: 0, failed: 0 };
+  for (const r of rideRows.rows) if (r.status in ridesToday) ridesToday[r.status] = Number(r.n);
+  // "Failed" bookings = cancelled + requests sitting unfulfilled for >1h.
+  const staleRequested = await one("SELECT COUNT(*) AS n FROM rides WHERE status = 'requested' AND created_at < ?", [now() - 3600000]);
+  ridesToday.failed = ridesToday.cancelled + staleRequested;
+  const openSos = await client.execute({
+    sql: "SELECT c.*, u.name AS user_name, u.phone AS user_phone FROM complaints c LEFT JOIN users u ON u.id = c.user_id WHERE c.status = 'open' AND c.kind = 'sos' ORDER BY c.created_at DESC LIMIT 20",
+  });
+  const refundRows = await client.execute({
+    sql: "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM transactions WHERE type = 'refund' AND created_at >= ?",
+    args: [dayAgo],
+  });
+  const walletRows = await client.execute({
+    sql: "SELECT u.role AS role, COALESCE(SUM(w.balance), 0) AS total FROM wallets w JOIN users u ON u.id = w.user_id GROUP BY u.role",
+  });
+  const wallets = { drivers: 0, riders: 0, total: 0 };
+  for (const w of walletRows.rows) {
+    const total = Number(w.total);
+    if (w.role === "driver") wallets.drivers = total;
+    else if (w.role === "rider") wallets.riders = total;
+    wallets.total += total;
+  }
+  res.json({
+    pilot_mode: String(s.pilot_mode) === "1",
+    pilot_chunian_only: String(s.pilot_chunian_only) === "1",
+    caps: { drivers: pilotCap("driver", s), riders: pilotCap("rider", s) },
+    drivers: {
+      whitelisted: await one("SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = 'driver' AND status IN ('pending','approved')"),
+      signed_up: await one("SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = 'driver' AND status = 'approved'"),
+      verified: await one("SELECT COUNT(*) AS n FROM drivers WHERE documents_status = 'approved'"),
+      approved: await one("SELECT COUNT(*) AS n FROM drivers WHERE status = 'approved'"),
+      online: await one("SELECT COUNT(*) AS n FROM drivers WHERE online = 1 AND status = 'approved'"),
+      pending_approval: await one("SELECT COUNT(*) AS n FROM drivers WHERE status = 'pending'"),
+    },
+    riders: {
+      whitelisted: await one("SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = 'rider' AND status IN ('pending','approved')"),
+      signed_up: await one("SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = 'rider' AND status = 'approved'"),
+    },
+    rides_today: ridesToday,
+    open_complaints: await one("SELECT COUNT(*) AS n FROM complaints WHERE status = 'open' AND kind = 'complaint'"),
+    open_sos: openSos.rows,
+    pending: {
+      topups: await one("SELECT COUNT(*) AS n FROM topup_requests WHERE status = 'pending'"),
+      withdrawals: await one("SELECT COUNT(*) AS n FROM withdrawals WHERE status = 'pending'"),
+      refunds_today: Number(refundRows.rows[0].n),
+      refunds_today_total: Number(refundRows.rows[0].total),
+    },
+    wallets,
+  });
+});
+
+// Post-pilot report data (v2.2): completed rides, failed/cancelled bookings
+// with reasons, ratings, complaints + feedback, financial totals, and a
+// reconciliation check (wallet ledger vs expected from rides/transactions).
+// Aggregates ONLY real data — it never invents feedback.
+app.get("/api/admin/pilot-report", requireAdmin, async (req, res) => {
+  const days = num(req.query.days, 7);
+  const since = now() - days * 86400000;
+  const one = async (sql, args = []) => Number((await client.execute({ sql, args })).rows[0].n);
+
+  const rideAgg = await client.execute({
+    sql: "SELECT status, COUNT(*) AS n, COALESCE(SUM(agreed_fare), 0) AS gross, COALESCE(SUM(commission_charged), 0) AS fees, COALESCE(SUM(tip_amount), 0) AS tips FROM rides WHERE created_at >= ? GROUP BY status",
+    args: [since],
+  });
+  const byStatus = {};
+  let completed = 0, grossFares = 0, commissionEarned = 0, tipsTotal = 0;
+  for (const r of rideAgg.rows) {
+    byStatus[r.status] = Number(r.n);
+    if (r.status === "completed") {
+      completed = Number(r.n);
+      grossFares = Number(r.gross);
+      commissionEarned = Number(r.fees);
+      tipsTotal = Number(r.tips);
+    }
+  }
+  const byVehicle = await client.execute({
+    sql: "SELECT vehicle_type, COUNT(*) AS n, COALESCE(SUM(agreed_fare), 0) AS gross FROM rides WHERE status = 'completed' AND completed_at >= ? GROUP BY vehicle_type",
+    args: [since],
+  });
+  const cancelled = await client.execute({
+    sql: `SELECT r.*, u.name AS rider_name, d.name AS driver_name FROM rides r
+          JOIN users u ON u.id = r.rider_id LEFT JOIN users d ON d.id = r.driver_id
+          WHERE r.status = 'cancelled' AND r.created_at >= ? ORDER BY r.created_at DESC LIMIT 100`,
+    args: [since],
+  });
+  const stale = await client.execute({
+    sql: `SELECT r.*, u.name AS rider_name FROM rides r JOIN users u ON u.id = r.rider_id
+          WHERE r.status = 'requested' AND r.created_at < ? AND r.created_at >= ? ORDER BY r.created_at DESC LIMIT 100`,
+    args: [now() - 3600000, since],
+  });
+  const byDriver = await client.execute({
+    sql: `SELECT u.id AS driver_id, u.name, AVG(r.rating_driver) AS avg_rating, COUNT(r.rating_driver) AS rating_count
+          FROM rides r JOIN users u ON u.id = r.driver_id
+          WHERE r.status = 'completed' AND r.rating_driver IS NOT NULL AND r.created_at >= ?
+          GROUP BY u.id ORDER BY avg_rating DESC`,
+    args: [since],
+  });
+  const ratings = await client.execute({
+    sql: `SELECT r.id AS ride_id, r.rating_driver, r.rating_rider, ru.name AS rider_name, du.name AS driver_name, r.completed_at
+          FROM rides r JOIN users ru ON ru.id = r.rider_id LEFT JOIN users du ON du.id = r.driver_id
+          WHERE r.status = 'completed' AND (r.rating_driver IS NOT NULL OR r.rating_rider IS NOT NULL) AND r.created_at >= ?
+          ORDER BY r.completed_at DESC LIMIT 100`,
+    args: [since],
+  });
+  const complaints = await client.execute({
+    sql: `SELECT c.*, u.name AS user_name FROM complaints c LEFT JOIN users u ON u.id = c.user_id
+          WHERE c.created_at >= ? ORDER BY c.created_at DESC LIMIT 100`,
+    args: [since],
+  });
+  const finRows = await client.execute({
+    sql: "SELECT type, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM transactions WHERE created_at >= ? GROUP BY type",
+    args: [since],
+  });
+  const finByType = {};
+  for (const f of finRows.rows) finByType[f.type] = { count: Number(f.n), total: Number(f.total) };
+
+  // ---- Reconciliation (all-time — ledger integrity, not just the period) ----
+  const walletRows = await client.execute({
+    sql: "SELECT w.user_id, w.balance, COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.user_id = w.user_id), 0) AS ledger_sum FROM wallets w",
+  });
+  const walletMismatches = walletRows.rows
+    .filter((r) => Number(r.balance) !== Number(r.ledger_sum))
+    .map((r) => ({ user_id: Number(r.user_id), wallet_balance: Number(r.balance), ledger_sum: Number(r.ledger_sum), difference: Number(r.balance) - Number(r.ledger_sum) }));
+  const commTx = await one("SELECT COALESCE(SUM(amount), 0) AS n FROM transactions WHERE type = 'commission'");
+  const commRides = await one("SELECT COALESCE(SUM(commission_charged), 0) AS n FROM rides WHERE status = 'completed'");
+  // Top-ups: seeded demo starting balances live in the ledger (migrated
+  // from wallet_tx) but were never top-up REQUESTS — compare non-demo
+  // users only, on both sides.
+  const topupTx = await one("SELECT COALESCE(SUM(t.amount), 0) AS n FROM transactions t JOIN users u ON u.id = t.user_id WHERE t.type = 'topup' AND u.demo = 0");
+  const topupApproved = await one("SELECT COALESCE(SUM(r.amount), 0) AS n FROM topup_requests r JOIN users u ON u.id = r.driver_id WHERE r.status = 'approved' AND u.demo = 0");
+  const wdNet = await one("SELECT COALESCE(SUM(amount), 0) AS n FROM transactions WHERE type IN ('withdrawal_hold','withdrawal_refund')");
+  const wdExpected = -await one("SELECT COALESCE(SUM(amount), 0) AS n FROM withdrawals WHERE status IN ('pending','approved')");
+  const refundTxCount = await one("SELECT COUNT(*) AS n FROM transactions WHERE type = 'refund'");
+  const refundAuditCount = await one("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'refund_credit'");
+  const tipTxCount = await one("SELECT COUNT(*) AS n FROM transactions WHERE type = 'tip'");
+  const checks = [
+    { name: "wallet_vs_ledger", expected: 0, actual: walletMismatches.length, difference: walletMismatches.length, ok: walletMismatches.length === 0, detail: walletMismatches.length ? `${walletMismatches.length} wallet(s) differ from their ledger` : "Every wallet balance equals its transaction ledger sum" },
+    { name: "commission", expected: -commRides, actual: commTx, difference: commTx - (-commRides), ok: commTx === -commRides, detail: `Commission debited Rs ${commTx} vs rides charged Rs ${commRides}` },
+    { name: "topups", expected: topupApproved, actual: topupTx, difference: topupTx - topupApproved, ok: topupTx === topupApproved, detail: `Top-up credits Rs ${topupTx} vs approved requests Rs ${topupApproved} (non-demo users; seeded demo balances excluded)` },
+    { name: "withdrawals", expected: wdExpected, actual: wdNet, difference: wdNet - wdExpected, ok: wdNet === wdExpected, detail: `Withdrawal ledger net Rs ${wdNet} vs expected Rs ${wdExpected}` },
+    { name: "refunds", expected: refundAuditCount, actual: refundTxCount, difference: refundTxCount - refundAuditCount, ok: refundTxCount === refundAuditCount, detail: `${refundTxCount} refund transactions vs ${refundAuditCount} refund audit entries` },
+    { name: "tips_not_in_wallet", expected: 0, actual: tipTxCount, difference: tipTxCount, ok: tipTxCount === 0, detail: "Tips are cash — none should appear in the wallet ledger" },
+  ];
+  const discrepancies = checks.filter((c) => !c.ok);
+
+  res.json({
+    days,
+    generated_at: now(),
+    rides: { total: Object.values(byStatus).reduce((a, b) => a + b, 0), completed, by_status: byStatus, by_vehicle: byVehicle.rows },
+    cancelled_bookings: cancelled.rows,
+    failed_bookings: stale.rows,
+    ratings_by_driver: byDriver.rows.map((r) => ({ driver_id: Number(r.driver_id), name: r.name, avg_rating: Number(r.avg_rating), rating_count: Number(r.rating_count) })),
+    feedback: { ratings: ratings.rows, complaints: complaints.rows },
+    complaints: {
+      open: complaints.rows.filter((c) => c.status === "open").length,
+      resolved: complaints.rows.filter((c) => c.status === "resolved").length,
+    },
+    financials: {
+      gross_fares: grossFares,
+      commission_earned: commissionEarned,
+      tips: tipsTotal,
+      by_transaction_type: finByType,
+    },
+    reconciliation: { checks, discrepancies, wallet_mismatches: walletMismatches },
+  });
+});
+
 // ---- Admin cities (service areas; the rider app reads them via /api/places) ----
 app.get("/api/admin/cities", requireAdmin, async (req, res) => {
   const rows = await client.execute({ sql: "SELECT * FROM cities ORDER BY id ASC" });
@@ -1124,6 +1415,76 @@ app.post("/api/admin/users/:id/reactivate", requireAdmin, async (req, res) => {
   res.json({ status: "active" });
 });
 
+// ---- Pilot whitelist (v2.2) — admin-only ----
+// While pilot_mode is ON, ONLY these phones may sign up. Caps: 10 drivers,
+// 20 riders (settings pilot_max_drivers / pilot_max_riders). Adding beyond
+// a cap is rejected; signup re-checks the live count as a second layer.
+app.get("/api/admin/pilot-whitelist", requireAdmin, async (req, res) => {
+  const s = await getSettings();
+  const rows = await client.execute({ sql: "SELECT * FROM pilot_whitelist ORDER BY role, created_at DESC" });
+  const count = async (role, status) =>
+    Number((await client.execute({ sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status = ?", args: [role, status] })).rows[0].n);
+  res.json({
+    pilot_mode: String(s.pilot_mode) === "1",
+    caps: { drivers: pilotCap("driver", s), riders: pilotCap("rider", s) },
+    counts: {
+      drivers_pending: await count("driver", "pending"), drivers_approved: await count("driver", "approved"),
+      riders_pending: await count("rider", "pending"), riders_approved: await count("rider", "approved"),
+    },
+    whitelist: rows.rows,
+  });
+});
+
+app.post("/api/admin/pilot-whitelist", requireAdmin, async (req, res) => {
+  const { phone, role } = req.body || {};
+  const wantRole = role === "driver" ? "driver" : "rider";
+  const cleanPhone = normalizePhone(phone || "");
+  if (!cleanPhone) return res.status(400).json({ error: "phone is required" });
+  const s = await getSettings();
+  const cap = pilotCap(wantRole, s);
+  const existing = await client.execute({
+    sql: "SELECT * FROM pilot_whitelist WHERE phone = ? AND role = ?",
+    args: [cleanPhone, wantRole],
+  });
+  if (existing.rows.length && existing.rows[0].status !== "revoked") {
+    return res.status(409).json({ error: "Is phone par whitelist entry pehle se hai" });
+  }
+  const live = await client.execute({
+    sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status IN ('pending','approved')",
+    args: [wantRole],
+  });
+  if (Number(live.rows[0].n) >= cap) {
+    return res.status(400).json({
+      error: wantRole === "driver"
+        ? "Pilot driver limit poori ho gayi — mazeed drivers add nahi ho sakte"
+        : "Pilot rider limit poori ho gayi — mazeed riders add nahi ho sakte",
+    });
+  }
+  let entryId;
+  if (existing.rows.length) {
+    // Revoked entry re-invited: flip it back to pending.
+    await client.execute({ sql: "UPDATE pilot_whitelist SET status='pending', added_by=?, created_at=? WHERE id=?", args: [req.auth.ownerId, now(), existing.rows[0].id] });
+    entryId = Number(existing.rows[0].id);
+  } else {
+    const r = await client.execute({
+      sql: "INSERT INTO pilot_whitelist(phone, role, status, added_by, created_at) VALUES (?, ?, 'pending', ?, ?)",
+      args: [cleanPhone, wantRole, req.auth.ownerId, now()],
+    });
+    entryId = Number(r.lastInsertRowid);
+  }
+  await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "whitelist_add", targetType: "pilot_whitelist", targetId: entryId, detail: `Whitelisted ${cleanPhone} as ${wantRole} (pilot cap ${cap})` });
+  res.json({ entry_id: entryId, phone: cleanPhone, role: wantRole, status: "pending" });
+});
+
+app.delete("/api/admin/pilot-whitelist/:id", requireAdmin, async (req, res) => {
+  const row = await client.execute({ sql: "SELECT * FROM pilot_whitelist WHERE id = ?", args: [num(req.params.id)] });
+  if (!row.rows.length) return res.status(404).json({ error: "whitelist entry not found" });
+  const e = row.rows[0];
+  await client.execute({ sql: "DELETE FROM pilot_whitelist WHERE id = ?", args: [num(req.params.id)] });
+  await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "whitelist_remove", targetType: "pilot_whitelist", targetId: num(req.params.id), detail: `Removed ${e.phone} (${e.role}) from the pilot whitelist` });
+  res.json({ ok: true, removed: num(req.params.id) });
+});
+
 // Top-up review — the owner checks the TID in his own JazzCash app, then
 // approves (credits the wallet exactly once) or rejects (credits nothing).
 app.get("/api/admin/topups", requireAdmin, async (req, res) => {
@@ -1185,9 +1546,39 @@ app.post("/api/admin/promo-codes/:id/deactivate", requireAdmin, async (req, res)
   res.json({ active: 0 });
 });
 
+// Audit log with filters (v2.2): action type, actor (user/admin id),
+// date range (epoch ms). Limit 500 rows per read; the CSV export below
+// shares the same filter builder.
+function auditFilterSql(req) {
+  const { action, actor_id, from, to } = req.query || {};
+  let sql = "SELECT * FROM audit_log WHERE 1=1";
+  const args = [];
+  if (action) { sql += " AND action = ?"; args.push(String(action)); }
+  if (actor_id) { sql += " AND actor_id = ?"; args.push(num(actor_id)); }
+  if (from) { sql += " AND created_at >= ?"; args.push(num(from)); }
+  if (to) { sql += " AND created_at <= ?"; args.push(num(to)); }
+  return { sql, args };
+}
 app.get("/api/admin/audit-log", requireAdmin, async (req, res) => {
-  const rows = await client.execute({ sql: "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 100" });
+  const { sql, args } = auditFilterSql(req);
+  const rows = await client.execute({ sql: sql + " ORDER BY created_at DESC LIMIT 500", args });
   res.json({ audit_log: rows.rows });
+});
+
+// CSV export of the audit log (v2.2, admin-only): same filters as the
+// list endpoint. Every financial mutation is in here — top-ups, withdrawals,
+// refunds, ride settlements, tips, promo discounts, SOS alerts, pilot toggles.
+app.get("/api/admin/audit-log/export", requireAdmin, async (req, res) => {
+  const { sql, args } = auditFilterSql(req);
+  const rows = await client.execute({ sql: sql + " ORDER BY created_at ASC LIMIT 5000", args });
+  const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const lines = [["id", "created_at", "created_iso", "actor_id", "actor_role", "action", "target_type", "target_id", "detail"].join(",")];
+  for (const a of rows.rows) {
+    lines.push([a.id, a.created_at, new Date(Number(a.created_at)).toISOString(), a.actor_id, a.actor_role, a.action, a.target_type, a.target_id, a.detail].map(esc).join(","));
+  }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="chunian-ride-audit-log.csv"');
+  res.send(lines.join("\n"));
 });
 
 // Launch hygiene: suspend every demo account (and take demo drivers offline).
@@ -1202,18 +1593,39 @@ app.post("/api/admin/demo/disable", requireAdmin, async (req, res) => {
 
 // Fare + commission settings — take effect immediately for new fare estimates.
 app.post("/api/admin/settings", requireAdmin, async (req, res) => {
-  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup", "min_withdrawal"];
+  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup", "min_withdrawal", "pilot_mode", "pilot_max_drivers", "pilot_max_riders", "pilot_chunian_only"];
+  const before = await getSettings();
   const changed = [];
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
+      let value = String(req.body[key]);
+      // Pilot keys are validated: mode flags are "0"/"1", caps are
+      // non-negative integers. A bad value is rejected, not stored.
+      if (key === "pilot_mode" || key === "pilot_chunian_only") {
+        if (value !== "0" && value !== "1") return res.status(400).json({ error: "pilot_mode must be 0 or 1" });
+      }
+      if (key === "pilot_max_drivers" || key === "pilot_max_riders") {
+        const n = Math.floor(Number(value));
+        if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: "pilot cap must be a number" });
+        value = String(n);
+      }
       await client.execute({
         sql: "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        args: [key, String(req.body[key])],
+        args: [key, value],
       });
-      changed.push(`${key}=${req.body[key]}`);
+      changed.push(`${key}=${value}`);
     }
   }
   await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "settings_change", targetType: "settings", targetId: null, detail: changed.join(", ") });
+  // Pilot mode toggle gets its own audit entry (v2.2): turning public
+  // registration on/off must always be traceable.
+  if (req.body.pilot_mode !== undefined && String(before.pilot_mode) !== String(req.body.pilot_mode)) {
+    await writeAudit(client, {
+      actorId: req.auth.ownerId, actorRole: "admin", action: "pilot_mode_toggle",
+      targetType: "settings", targetId: null,
+      detail: `Pilot mode ${before.pilot_mode} -> ${req.body.pilot_mode} (${String(req.body.pilot_mode) === "1" ? "public signup CLOSED, whitelist only" : "public signup OPEN"})`,
+    });
+  }
   res.json({ settings: await getSettings() });
 });
 
@@ -1431,7 +1843,10 @@ app.post("/api/admin/refunds", requireAdmin, async (req, res) => {
 // max 1024px JPEG 0.8 before upload; server caps at ~1.5 MB, JPG/PNG
 // only). The full data URL is visible ONLY to admins; the owning driver
 // sees metadata (type/status) only; other users see nothing at all.
-const DOC_TYPES = ["cnic_front", "cnic_back", "licence"];
+const DOC_TYPES = ["cnic_front", "cnic_back", "cnic", "licence", "vehicle", "other"];
+// Required for driver activation (v2.2 gate): CNIC + licence + vehicle.
+// "cnic" is a single CNIC photo; "cnic_front"+"cnic_back" is the legacy
+// two-photo flow — either satisfies CNIC. "other" never counts.
 const DOC_MIMES = ["image/jpeg", "image/png"];
 const DOC_MAX_CHARS = 2100000; // ~1.5 MB of image bytes as base64
 
@@ -1467,7 +1882,7 @@ app.get("/api/drivers/me/documents", requireAuth, async (req, res) => {
     sql: "SELECT id, doc_type, mime, status, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
     args: [req.auth.ownerId],
   });
-  res.json({ documents: rows.rows });
+  res.json({ documents: rows.rows, doc_checklist: await getDocChecklist(client, req.auth.ownerId) });
 });
 
 app.get("/api/admin/drivers/:id/documents", requireAdmin, async (req, res) => {
@@ -1475,7 +1890,7 @@ app.get("/api/admin/drivers/:id/documents", requireAdmin, async (req, res) => {
     sql: "SELECT id, doc_type, mime, status, data_url, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
     args: [num(req.params.id)],
   });
-  res.json({ documents: rows.rows });
+  res.json({ documents: rows.rows, doc_checklist: await getDocChecklist(client, num(req.params.id)) });
 });
 
 app.get("/api/admin/documents/:id", requireAdmin, async (req, res) => {
@@ -1490,13 +1905,10 @@ app.post("/api/admin/documents/:id/approve", requireAdmin, async (req, res) => {
   const d = doc.rows[0];
   await withTx(async (tx) => {
     await tx.execute({ sql: "UPDATE documents SET status='approved', reviewed_at=? WHERE id=?", args: [now(), num(req.params.id)] });
-    const approved = await tx.execute({
-      sql: "SELECT COUNT(*) AS n FROM documents WHERE driver_id = ? AND doc_type IN ('cnic_front','cnic_back','licence') AND status = 'approved'",
-      args: [d.driver_id],
-    });
-    if (Number(approved.rows[0].n) >= 3) {
-      await tx.execute({ sql: "UPDATE drivers SET documents_status='approved' WHERE user_id = ?", args: [d.driver_id] });
-    }
+    // Recompute the verification gate (v2.2): documents_status is
+    // 'approved' only when CNIC + licence + vehicle are ALL approved.
+    const cl = await getDocChecklist(tx, d.driver_id);
+    await tx.execute({ sql: "UPDATE drivers SET documents_status=? WHERE user_id = ?", args: [cl.all ? "approved" : "pending", d.driver_id] });
   });
   await writeAudit(client, { actorId: req.auth.ownerId, actorRole: "admin", action: "document_approve", targetType: "document", targetId: num(req.params.id), detail: `Document ${d.doc_type} approved for driver user #${d.driver_id}` });
   await notify(client, { userId: Number(d.driver_id), role: "user", type: "doc_approved", params: { doc: d.doc_type } });

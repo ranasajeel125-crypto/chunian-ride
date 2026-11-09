@@ -76,6 +76,7 @@
     <aside class="sidebar" aria-label="Admin sections">
       <div class="side-title" data-i18n="nav_title">Admin</div>
       <button class="nav-btn active" type="button" data-section="overview"><span class="ico">📊</span><span data-i18n="nav_overview">Overview</span></button>
+      <button class="nav-btn" type="button" data-section="pilot"><span class="ico">🚀</span><span data-i18n="nav_pilot">Pilot</span></button>
       <button class="nav-btn" type="button" data-section="rides"><span class="ico">🚖</span><span data-i18n="nav_rides">Rides</span></button>
       <button class="nav-btn" type="button" data-section="drivers"><span class="ico">🧑‍✈️</span><span data-i18n="nav_drivers">Drivers</span><span class="badge hidden" id="badge-drivers">0</span></button>
       <button class="nav-btn" type="button" data-section="users"><span class="ico">👥</span><span data-i18n="nav_users">Users</span></button>
@@ -93,6 +94,7 @@
     <main class="content">
       <select id="section-picker" class="section-picker" aria-label="Section">
         <option value="overview" data-i18n="nav_overview">Overview</option>
+        <option value="pilot" data-i18n="nav_pilot">Pilot</option>
         <option value="rides" data-i18n="nav_rides">Rides</option>
         <option value="drivers" data-i18n="nav_drivers">Drivers</option>
         <option value="users" data-i18n="nav_users">Users</option>
@@ -132,6 +134,50 @@
           </div>
           <button class="primary" id="calc-btn" type="button" data-i18n="calculate">Calculate</button>
           <div id="profit-out" style="margin-top:12px"></div>
+        </div>
+      </section>
+
+      <!-- PILOT (v2.2) -->
+      <section class="dash-section hidden" id="sec-pilot">
+        <div class="section-head">
+          <h2 data-i18n="pilot_title">Pilot Launch — Controlled Rollout</h2>
+          <button type="button" data-refresh="pilot" data-i18n="refresh">Refresh</button>
+        </div>
+        <div class="note" data-i18n="pilot_note">Pilot mode ON = public signup is closed; only whitelisted phones can register (max 10 drivers, 20 riders). Rides are Chunian City only. Turn pilot mode OFF only when you are ready for public launch — every toggle is written to the audit log.</div>
+        <div class="card">
+          <h3 data-i18n="pilot_title">Pilot Launch — Controlled Rollout</h3>
+          <div class="form-grid">
+            <div><label><input id="pilot-mode" type="checkbox" checked> <span data-i18n="pilot_mode_label">Pilot mode ON (whitelist-only signup)</span></label></div>
+            <div><label><input id="pilot-chunian-only" type="checkbox" checked> <span data-i18n="pilot_chunian_only_label">Chunian-only rides (block intercity)</span></label></div>
+            <div><label for="pilot-max-drivers" data-i18n="pilot_max_drivers_label">Max pilot drivers</label><input id="pilot-max-drivers" type="number" min="0" value="10"></div>
+            <div><label for="pilot-max-riders" data-i18n="pilot_max_riders_label">Max pilot riders</label><input id="pilot-max-riders" type="number" min="0" value="20"></div>
+          </div>
+          <p class="inline-error" id="pilot-error" role="alert"></p>
+          <button class="primary" id="pilot-save-btn" type="button" data-i18n="pilot_save">Save pilot settings</button>
+          <p class="muted" id="pilot-out" style="margin-top:10px"></p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="pilot_status_title">Pilot Live Board</h3>
+          <div id="pilot-status-out"><p class="loading" data-i18n="loading">Loading…</p></div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="pilot_whitelist_title">Pilot Whitelist — who may sign up</h3>
+          <div class="form-grid">
+            <div><label for="pilot-phone" data-i18n="pilot_add_phone">Phone — e.g. 0301-2345678</label><input id="pilot-phone" inputmode="tel" placeholder="0301-2345678"></div>
+            <div><label for="pilot-role" data-i18n="pilot_add_role">Role</label>
+              <select id="pilot-role"><option value="rider" data-i18n="rider">Rider</option><option value="driver" data-i18n="driver">Driver</option></select></div>
+          </div>
+          <button class="primary" id="pilot-add-btn" type="button" data-i18n="pilot_add_btn">Add to whitelist</button>
+          <div id="pilot-whitelist-out" style="margin-top:12px"><p class="loading" data-i18n="loading">Loading…</p></div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="pilot_report_title">Pilot Report</h3>
+          <div class="form-grid">
+            <div><label for="pilot-report-days" data-i18n="pilot_report_days">Days</label><input id="pilot-report-days" type="number" min="1" max="90" value="7"></div>
+          </div>
+          <button class="primary" id="pilot-report-btn" type="button" data-i18n="pilot_report_load">Load report</button>
+          <button id="pilot-export-btn" type="button" data-i18n="pilot_export_csv">Download report CSV</button>
+          <div id="pilot-report-out" style="margin-top:12px"></div>
         </div>
       </section>
 
@@ -303,6 +349,16 @@
           <h2 data-i18n="audit_title">Audit Log</h2>
           <button type="button" data-refresh="audit" data-i18n="refresh">Refresh</button>
         </div>
+        <div class="card">
+          <div class="form-grid">
+            <div><label for="audit-filter-action" data-i18n="audit_filter_action">Action (e.g. topup_approve)</label><input id="audit-filter-action" placeholder="topup_approve"></div>
+            <div><label for="audit-filter-actor" data-i18n="audit_filter_actor">Actor ID</label><input id="audit-filter-actor" type="number" min="1"></div>
+            <div><label for="audit-filter-from" data-i18n="audit_filter_from">From (date)</label><input id="audit-filter-from" type="date"></div>
+            <div><label for="audit-filter-to" data-i18n="audit_filter_to">To (date)</label><input id="audit-filter-to" type="date"></div>
+          </div>
+          <button class="primary" id="audit-filter-btn" type="button" data-i18n="audit_apply">Apply filters</button>
+          <button id="audit-export-btn" type="button" data-i18n="audit_export_csv">Download CSV</button>
+        </div>
         <div class="card"><div id="audit-out"><p class="loading" data-i18n="loading">Loading…</p></div></div>
       </section>
 
@@ -337,6 +393,6 @@
 </div>
 
 <div id="toasts" aria-live="polite"></div>
-<script src="/admin.js?v=7"></script>
+<script src="/admin.js?v=8"></script>
 </body>
 </html>

@@ -310,7 +310,7 @@ async function downscaleImage(file) {
   return canvas.toDataURL("image/jpeg", 0.8);
 }
 function docLabel(dt) {
-  return t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", licence: "doc_licence" }[dt] || "doc_licence");
+  return t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", cnic: "doc_cnic", licence: "doc_licence", vehicle: "doc_vehicle", other: "doc_other" }[dt] || "doc_licence");
 }
 async function uploadDoc(docType, file, btn) {
   if (!file) return;
@@ -334,7 +334,11 @@ async function renderDocs() {
     const d = await api("/api/drivers/me/documents");
     const byType = {};
     for (const doc of d.documents || []) byType[doc.doc_type] = doc;
-    box.innerHTML = ["cnic_front", "cnic_back", "licence"].map((dt) => {
+    // Verification checklist (v2.2): CNIC + licence + vehicle must ALL be
+    // approved before the owner can approve the driver account.
+    const cl = d.doc_checklist || { cnic: false, licence: false, vehicle: false };
+    const checkLine = `<p class="muted"><b>${escapeHtml(t("docs_checklist", { cnic: cl.cnic ? t("docs_checklist_ok") : t("docs_checklist_no"), licence: cl.licence ? t("docs_checklist_ok") : t("docs_checklist_no"), vehicle: cl.vehicle ? t("docs_checklist_ok") : t("docs_checklist_no") }))}</b></p>`;
+    box.innerHTML = checkLine + ["cnic_front", "cnic_back", "licence", "vehicle"].map((dt) => {
       const doc = byType[dt];
       const status = doc ? (doc.status === "approved" ? t("doc_approved") : doc.status === "rejected" ? t("doc_rejected") : t("doc_pending")) : t("doc_pending");
       return `<div class="doc-row"><span><b>${docLabel(dt)}</b><br><span class="badge">${status}</span></span>

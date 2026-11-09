@@ -42,6 +42,7 @@ const STRINGS = {
     nav_settings: "Settings",
     nav_audit: "Audit Log",
     nav_security: "Security",
+    nav_pilot: "Pilot",
     refresh: "Refresh",
     loading: "Loading…",
     overview_title: "Overview",
@@ -53,6 +54,9 @@ const STRINGS = {
     calc_cost: "Monthly cost (Rs)",
     calculate: "Calculate",
     rides_title: "All Rides",
+    rides: "rides",
+    cancelled_rides: "Cancelled bookings",
+    failed_rides: "Failed bookings",
     drivers_title: "Drivers — Approve / Block",
     users_title: "Passengers & Drivers — Manage",
     topups_title: "Top-up Requests",
@@ -106,6 +110,37 @@ const STRINGS = {
     support_whatsapp: "Support WhatsApp",
     settings_save: "Save settings",
     audit_title: "Audit Log",
+    // Pilot launch (v2.2)
+    pilot_title: "Pilot Launch — Controlled Rollout",
+    pilot_note: "Pilot mode ON = public signup is closed; only whitelisted phones can register (max 10 drivers, 20 riders). Rides are Chunian City only. Turn pilot mode OFF only when you are ready for public launch — every toggle is written to the audit log.",
+    pilot_mode_label: "Pilot mode ON (whitelist-only signup)",
+    pilot_chunian_only_label: "Chunian-only rides (block intercity)",
+    pilot_max_drivers_label: "Max pilot drivers",
+    pilot_max_riders_label: "Max pilot riders",
+    pilot_save: "Save pilot settings",
+    pilot_status_title: "Pilot Live Board",
+    pilot_whitelist_title: "Pilot Whitelist — who may sign up",
+    pilot_add_phone: "Phone — e.g. 0301-2345678",
+    pilot_add_role: "Role",
+    pilot_add_btn: "Add to whitelist",
+    pilot_remove: "Remove",
+    pilot_empty: "Nobody whitelisted yet.",
+    pilot_report_title: "Pilot Report",
+    pilot_report_days: "Days",
+    pilot_report_load: "Load report",
+    pilot_export_csv: "Download report CSV",
+    pilot_recon_ok: "✓ All reconciliation checks passed — no discrepancies.",
+    pilot_recon_mismatch: "⚠ Reconciliation mismatch — see discrepancies below.",
+    audit_filter_action: "Action (e.g. topup_approve)",
+    audit_filter_actor: "Actor ID",
+    audit_filter_from: "From (date)",
+    audit_filter_to: "To (date)",
+    audit_apply: "Apply filters",
+    audit_export_csv: "Download CSV",
+    toast_pilot_saved: "Pilot settings saved.",
+    toast_whitelist_added: "Phone added to the pilot whitelist.",
+    toast_whitelist_removed: "Phone removed from the pilot whitelist.",
+    err_pilot_fields: "Phone and role are required.",
     security_title: "Security",
     pw_title: "Change admin password",
     pw_change: "Change password",
@@ -179,8 +214,11 @@ const STRINGS = {
     notif_title: "Notifications",
     notif_empty: "No notifications yet.",
     notif_mark_all: "Mark all read",
-    doc_cnic_front: "CNIC — front", doc_cnic_back: "CNIC — back", doc_licence: "Driving licence",
+    doc_cnic_front: "CNIC — front", doc_cnic_back: "CNIC — back", doc_cnic: "CNIC", doc_licence: "Driving licence", doc_vehicle: "Vehicle registration document", doc_other: "Other document",
     doc_approved: "Approved", doc_rejected: "Rejected", doc_pending: "Pending approval",
+    docs_checklist: "Verification: CNIC {cnic} • Licence {licence} • Vehicle {vehicle}",
+    docs_checklist_ok: "✓",
+    docs_checklist_no: "✗",
     toast_refund_dup: " (already credited — no double credit)",
     empty_rides: "No rides yet.",
     empty_drivers: "No drivers yet.",
@@ -269,6 +307,7 @@ const STRINGS = {
     nav_settings: "سیٹنگز",
     nav_audit: "آڈٹ لاگ",
     nav_security: "سیکیورٹی",
+    nav_pilot: "پائلٹ",
     refresh: "ریفریش",
     loading: "لوڈ ہو رہا ہے…",
     overview_title: "جائزہ",
@@ -280,6 +319,9 @@ const STRINGS = {
     calc_cost: "ماہانہ خرچ (روپے)",
     calculate: "حساب کریں",
     rides_title: "تمام رائڈز",
+    rides: "رائڈز",
+    cancelled_rides: "منسوخ شدہ بکنگز",
+    failed_rides: "ناکام بکنگز",
     drivers_title: "ڈرائیورز — منظور / بلاک کریں",
     users_title: "مسافر اور ڈرائیورز — مینج کریں",
     topups_title: "ٹاپ اپ درخواستیں",
@@ -333,6 +375,37 @@ const STRINGS = {
     support_whatsapp: "سپورٹ واٹس ایپ",
     settings_save: "سیٹنگز محفوظ کریں",
     audit_title: "آڈٹ لاگ",
+    // Pilot launch (v2.2)
+    pilot_title: "پائلٹ لانچ — کنٹرولڈ آغاز",
+    pilot_note: "پائلٹ موڈ آن = عوامی سائن اپ بند ہے؛ صرف وائٹ لسٹ والے فون رجسٹر کر سکتے ہیں (زیادہ سے زیادہ 10 ڈرائیور، 20 رائیڈر)۔ رائیڈز صرف چونیاں شہر تک ہیں۔ پائلٹ موڈ صرف اس وقت بند کریں جب آپ عوامی لانچ کے لیے تیار ہوں — ہر تبدیلی آڈٹ لاگ میں لکھی جاتی ہے۔",
+    pilot_mode_label: "پائلٹ موڈ آن (صرف وائٹ لسٹ سائن اپ)",
+    pilot_chunian_only_label: "صرف چونیاں کی رائیڈز (بین شہر بند)",
+    pilot_max_drivers_label: "زیادہ سے زیادہ پائلٹ ڈرائیور",
+    pilot_max_riders_label: "زیادہ سے زیادہ پائلٹ رائیڈر",
+    pilot_save: "پائلٹ سیٹنگز محفوظ کریں",
+    pilot_status_title: "پائلٹ لائیو بورڈ",
+    pilot_whitelist_title: "پائلٹ وائٹ لسٹ — کون سائن اپ کر سکتا ہے",
+    pilot_add_phone: "فون — مثال: 0301-2345678",
+    pilot_add_role: "کردار",
+    pilot_add_btn: "وائٹ لسٹ میں شامل کریں",
+    pilot_remove: "ہٹائیں",
+    pilot_empty: "ابھی کوئی وائٹ لسٹ پر نہیں ہے۔",
+    pilot_report_title: "پائلٹ رپورٹ",
+    pilot_report_days: "دن",
+    pilot_report_load: "رپورٹ لوڈ کریں",
+    pilot_export_csv: "رپورٹ CSV ڈاؤن لوڈ کریں",
+    pilot_recon_ok: "✓ تمام مطابقت کی جانچ پاس — کوئی فرق نہیں۔",
+    pilot_recon_mismatch: "⚠ مطابقت میں فرق — نیچے تفصیل دیکھیں۔",
+    audit_filter_action: "عمل (مثال: topup_approve)",
+    audit_filter_actor: "اداکار ID",
+    audit_filter_from: "کب سے (تاریخ)",
+    audit_filter_to: "کب تک (تاریخ)",
+    audit_apply: "فلٹر لگائیں",
+    audit_export_csv: "CSV ڈاؤن لوڈ کریں",
+    toast_pilot_saved: "پائلٹ سیٹنگز محفوظ ہو گئیں۔",
+    toast_whitelist_added: "فون پائلٹ وائٹ لسٹ میں شامل ہو گیا۔",
+    toast_whitelist_removed: "فون پائلٹ وائٹ لسٹ سے ہٹا دیا گیا۔",
+    err_pilot_fields: "فون اور کردار ضروری ہیں۔",
     security_title: "سیکیورٹی",
     pw_title: "ایڈمن پاس ورڈ بدلیں",
     pw_change: "پاس ورڈ بدلیں",
@@ -404,8 +477,11 @@ const STRINGS = {
     notif_title: "اطلاعات",
     notif_empty: "ابھی کوئی اطلاع نہیں۔",
     notif_mark_all: "سب پڑھی ہوئی کریں",
-    doc_cnic_front: "شناختی کارڈ — سامنے", doc_cnic_back: "شناختی کارڈ — پیچھے", doc_licence: "ڈرائیونگ لائسنس",
+    doc_cnic_front: "شناختی کارڈ — سامنے", doc_cnic_back: "شناختی کارڈ — پیچھے", doc_cnic: "شناختی کارڈ", doc_licence: "ڈرائیونگ لائسنس", doc_vehicle: "گاڑی کی رجسٹریشن دستاویز", doc_other: "دیگر دستاویز",
     doc_approved: "منظور شدہ", doc_rejected: "مسترد", doc_pending: "منظوری زیر التواء",
+    docs_checklist: "تصدیق: شناختی کارڈ {cnic} • لائسنس {licence} • گاڑی {vehicle}",
+    docs_checklist_ok: "✓",
+    docs_checklist_no: "✗",
     toast_refund_dup: " (پہلے ہی جمع ہو چکا — دوبارہ نہیں ہوا)",
     empty_rides: "ابھی کوئی رائڈ نہیں۔",
     empty_drivers: "ابھی کوئی ڈرائیور نہیں۔",
@@ -491,6 +567,7 @@ const NOTIF_TEMPLATES = {
     refund_credited: { title: "Refund credited", body: "Rs {amount} refunded to your wallet. {reason}" },
     doc_approved: { title: "Document approved", body: "Your {doc} was approved." },
     doc_rejected: { title: "Document rejected", body: "Your {doc} was rejected. Please re-upload." },
+    sos_alert: { title: "🚨 SOS ALERT — Ride #{ride}", body: "Emergency! {message}" },
   },
   ur: {
     offer_received: { title: "رائڈ #{ride} پر نئی پیشکش", body: "{driver} نے روپے {fare} کی پیشکش کی۔" },
@@ -513,6 +590,7 @@ const NOTIF_TEMPLATES = {
     refund_credited: { title: "ریفنڈ جمع ہو گیا", body: "روپے {amount} آپ کے والیٹ میں واپس آ گئے۔ {reason}" },
     doc_approved: { title: "دستاویز منظور", body: "آپ کی {doc} منظور ہو گئی۔" },
     doc_rejected: { title: "دستاویز مسترد", body: "آپ کی {doc} مسترد ہو گئی۔ براہ کرم دوبارہ اپ لوڈ کریں۔" },
+    sos_alert: { title: "🚨 SOS الرٹ — رائیڈ #{ride}", body: "ایمرجنسی! {message}" },
   },
 };
 
@@ -628,6 +706,17 @@ const ERR_MAP = {
   "Sirf driver apni documents upload kar sakta hai": { en: "Only a driver can upload their own documents.", ur: "صرف ڈرائیور ہی اپنی دستاویزات اپ لوڈ کر سکتا ہے۔" },
   "Sirf driver apni documents dekh sakta hai": { en: "Only a driver can see their own documents.", ur: "صرف ڈرائیور ہی اپنی دستاویزات دیکھ سکتا ہے۔" },
   "Sirf user account ka top-up yahan hota hai": { en: "Only a user account can top up here.", ur: "یہاں صرف صارف اکاؤنٹ کا ٹاپ اپ ہوتا ہے۔" },
+  // v2.2 — pilot launch
+  "Pilot registration sirf whitelist par hai — owner se rabta karein": { en: "Pilot registration only — contact the owner.", ur: "پائلٹ رجسٹریشن صرف وائٹ لسٹ پر ہے — مالک سے رابطہ کریں۔" },
+  "Pilot phase: sirf Chunian City ki rides — intercity rides abhi band hain": { en: "Pilot phase: rides are Chunian City only — intercity rides are not available yet.", ur: "پائلٹ مرحلہ: صرف چونیاں شہر کی رائیڈز — بین شہر رائیڈز ابھی بند ہیں۔" },
+  "Pilot limit poori ho gayi — registration band hai": { en: "The pilot limit is full — registration is closed.", ur: "پائلٹ کی حد پوری ہو گئی — رجسٹریشن بند ہے۔" },
+  "Pilot driver limit poori ho gayi — mazeed drivers add nahi ho sakte": { en: "The pilot driver limit is full — no more drivers can be added.", ur: "پائلٹ ڈرائیور کی حد پوری ہو گئی — مزید ڈرائیور شامل نہیں ہو سکتے۔" },
+  "Pilot rider limit poori ho gayi — mazeed riders add nahi ho sakte": { en: "The pilot rider limit is full — no more riders can be added.", ur: "پائلٹ رائیڈر کی حد پوری ہو گئی — مزید رائیڈر شامل نہیں ہو سکتے۔" },
+  "Is phone par whitelist entry pehle se hai": { en: "This phone is already on the whitelist.", ur: "یہ فون پہلے سے وائٹ لسٹ پر ہے۔" },
+  "Driver ki documents verify nahi — pehle documents approve karwain": { en: "The driver's documents are not verified yet — get the documents approved first.", ur: "ڈرائیور کی دستاویزات ابھی تصدیق شدہ نہیں — پہلے دستاویزات منظور کروائیں۔" },
+  "whitelist entry not found": { en: "Whitelist entry not found.", ur: "وائٹ لسٹ انٹری نہیں ملی۔" },
+  "pilot_mode must be 0 or 1": { en: "Pilot mode must be 0 or 1.", ur: "پائلٹ موڈ 0 یا 1 ہونا چاہیے۔" },
+  "pilot cap must be a number": { en: "The pilot cap must be a number.", ur: "پائلٹ کی حد ایک عدد ہونی چاہیے۔" },
 };
 function translateError(msg) {
   const m = ERR_MAP[msg];
@@ -743,6 +832,7 @@ function openDash(admin) {
 let currentSection = "overview";
 const loaders = {
   overview: loadOverview,
+  pilot: loadPilot,
   rides: loadRides,
   drivers: loadDrivers,
   users: loadUsers,
@@ -933,16 +1023,20 @@ async function loadDrivers() {
   try {
     const d = await api("/api/admin/drivers");
     if (!d.drivers.length) { el.innerHTML = `<div class="empty">${escapeHtml(t("empty_drivers"))}</div>`; return; }
-    el.innerHTML = d.drivers.map((x) => `<div class="row-item">
+    el.innerHTML = d.drivers.map((x) => {
+    const cl = x.doc_checklist || { cnic: false, licence: false, vehicle: false, all: false };
+    const checkLine = t("docs_checklist", { cnic: cl.cnic ? t("docs_checklist_ok") : t("docs_checklist_no"), licence: cl.licence ? t("docs_checklist_ok") : t("docs_checklist_no"), vehicle: cl.vehicle ? t("docs_checklist_ok") : t("docs_checklist_no") });
+    return `<div class="row-item">
       <b>${escapeHtml(x.name)}</b> (${escapeHtml(x.phone)}) — ${escapeHtml(x.vehicle_type)} • ${escapeHtml(x.vehicle_model || "")} • ${escapeHtml(x.plate || "")}<br>
       <span class="muted">CNIC: ${escapeHtml(x.cnic || t("unknown"))} • Licence: ${escapeHtml(x.licence || t("unknown"))} • Reg: ${escapeHtml(x.vehicle_reg || t("unknown"))}</span><br>
-      ${escapeHtml(t("status"))}: ${statusBadge(x.status)} • Docs: ${statusBadge(x.documents_status || "pending")} • Rating: ${escapeHtml(ratingText(x.rating, x.rating_count, "driver"))}${x.demo ? ` • ${escapeHtml(t("demo"))}` : ""} • ${escapeHtml(t("wallet"))} Rs ${Number(x.wallet_balance || 0)} • ${x.online ? escapeHtml(t("online")) : escapeHtml(t("offline"))}
+      ${escapeHtml(t("status"))}: ${statusBadge(x.status)} • Docs: ${statusBadge(x.documents_status || "pending")} • ${escapeHtml(checkLine)} • Rating: ${escapeHtml(ratingText(x.rating, x.rating_count, "driver"))}${x.demo ? ` • ${escapeHtml(t("demo"))}` : ""} • ${escapeHtml(t("wallet"))} Rs ${Number(x.wallet_balance || 0)} • ${x.online ? escapeHtml(t("online")) : escapeHtml(t("offline"))}
       <div class="row-actions">
         ${x.status !== "approved" ? `<button type="button" class="primary small" data-driver-action="approve" data-id="${Number(x.user_id)}">${escapeHtml(t("approve"))}</button>` : ""}
         ${x.status !== "blocked" ? `<button type="button" class="danger small" data-driver-action="block" data-id="${Number(x.user_id)}">${escapeHtml(t("block"))}</button>` : ""}
         <button type="button" class="small" data-docs-driver="${Number(x.user_id)}">${escapeHtml(t("doc_view"))}</button>
       </div>
-      <div id="docs-for-${Number(x.user_id)}" class="docs-panel"></div></div>`).join("");
+      <div id="docs-for-${Number(x.user_id)}" class="docs-panel"></div></div>`;
+  }).join("");
   } catch (e) { handleApiError(e); el.innerHTML = `<p class="inline-error">${escapeHtml((e && e.message) || t("err_load"))}</p>`; }
 }
 async function driverAction(id, action) {
@@ -1065,7 +1159,7 @@ async function submitRefund(btn) {
 // can never fetch another driver's documents (403), and the rider cannot
 // fetch any (403). Thumbnails render here for review.
 function docLabelAdmin(dt) {
-  return t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", licence: "doc_licence" }[dt] || "doc_licence");
+  return t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", cnic: "doc_cnic", licence: "doc_licence", vehicle: "doc_vehicle", other: "doc_other" }[dt] || "doc_licence");
 }
 async function loadDriverDocs(driverId) {
   const box = $("docs-for-" + driverId);
@@ -1073,8 +1167,10 @@ async function loadDriverDocs(driverId) {
   box.innerHTML = `<p class="loading">${escapeHtml(t("loading"))}</p>`;
   try {
     const d = await api(`/api/admin/drivers/${driverId}/documents`);
-    if (!d.documents.length) { box.innerHTML = `<div class="empty">${escapeHtml(t("empty_docs"))}</div>`; return; }
-    box.innerHTML = `<h4>${escapeHtml(t("docs_admin_title"))}</h4>` + d.documents.map((doc) => `<div class="doc-row">
+    const cl = d.doc_checklist || { cnic: false, licence: false, vehicle: false };
+    const checkLine = `<p><b>${escapeHtml(t("docs_checklist", { cnic: cl.cnic ? t("docs_checklist_ok") : t("docs_checklist_no"), licence: cl.licence ? t("docs_checklist_ok") : t("docs_checklist_no"), vehicle: cl.vehicle ? t("docs_checklist_ok") : t("docs_checklist_no") }))}</b></p>`;
+    if (!d.documents.length) { box.innerHTML = `<h4>${escapeHtml(t("docs_admin_title"))}</h4>` + checkLine + `<div class="empty">${escapeHtml(t("empty_docs"))}</div>`; return; }
+    box.innerHTML = `<h4>${escapeHtml(t("docs_admin_title"))}</h4>` + checkLine + d.documents.map((doc) => `<div class="doc-row">
       <span><b>${docLabelAdmin(doc.doc_type)}</b> • ${statusBadge(doc.status)}<br><span class="muted">${escapeHtml(fmtDate(doc.created_at))}</span></span>
       ${doc.data_url ? `<img class="doc-thumb" src="${escapeHtml(doc.data_url)}" alt="${escapeHtml(doc.doc_type)}">` : ""}
       <span class="row-actions">
@@ -1097,7 +1193,7 @@ function notifText(n) {
   const tpl = (NOTIF_TEMPLATES[lang] && NOTIF_TEMPLATES[lang][n.type]) || NOTIF_TEMPLATES.en[n.type];
   if (!tpl) return { title: n.type, body: "" };
   const vars = { ...(n.params || {}) };
-  if (vars.doc) vars.doc = t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", licence: "doc_licence" }[vars.doc] || "doc_licence");
+  if (vars.doc) vars.doc = t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", cnic: "doc_cnic", licence: "doc_licence", vehicle: "doc_vehicle", other: "doc_other" }[vars.doc] || "doc_licence");
   if (vars.when) { try { vars.when = fmtSched(new Date(vars.when).getTime()); } catch { /* keep raw */ } }
   let title = tpl.title, body = tpl.body;
   for (const [k, v] of Object.entries(vars)) {
@@ -1329,17 +1425,192 @@ async function saveSettings(btn) {
   finally { setBusy(btn, false); btn.textContent = t("settings_save"); }
 }
 
-// ---- Audit log ----
+// ---- Audit log (filters + CSV export, v2.2) ----
 async function loadAudit() {
   const el = $("audit-out");
   el.innerHTML = `<p class="loading">${escapeHtml(t("loading"))}</p>`;
   try {
-    const d = await api("/api/admin/audit-log");
+    const q = new URLSearchParams();
+    const action = $("audit-filter-action") ? $("audit-filter-action").value.trim() : "";
+    const actor = $("audit-filter-actor") ? $("audit-filter-actor").value.trim() : "";
+    const from = $("audit-filter-from") ? $("audit-filter-from").value : "";
+    const to = $("audit-filter-to") ? $("audit-filter-to").value : "";
+    if (action) q.set("action", action);
+    if (actor) q.set("actor_id", actor);
+    if (from) q.set("from", String(new Date(from + "T00:00:00").getTime()));
+    if (to) q.set("to", String(new Date(to + "T23:59:59").getTime()));
+    const qs = q.toString();
+    const d = await api("/api/admin/audit-log" + (qs ? "?" + qs : ""));
     if (!d.audit_log.length) { el.innerHTML = `<div class="empty">${escapeHtml(t("empty_audit"))}</div>`; return; }
     el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>${escapeHtml(t("tx_date"))}</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead><tbody>`
       + d.audit_log.map((a) => `<tr><td>${escapeHtml(fmtDate(a.created_at))}</td><td>${escapeHtml(a.action)}</td><td>${escapeHtml(a.target_type || "")}${a.target_id != null ? " #" + Number(a.target_id) : ""}</td><td>${escapeHtml(a.detail || "")}</td></tr>`).join("")
       + "</tbody></table></div>";
   } catch (e) { handleApiError(e); el.innerHTML = `<p class="inline-error">${escapeHtml((e && e.message) || t("err_load"))}</p>`; }
+}
+function exportAuditCsv() {
+  const q = new URLSearchParams();
+  const action = $("audit-filter-action") ? $("audit-filter-action").value.trim() : "";
+  const actor = $("audit-filter-actor") ? $("audit-filter-actor").value.trim() : "";
+  const from = $("audit-filter-from") ? $("audit-filter-from").value : "";
+  const to = $("audit-filter-to") ? $("audit-filter-to").value : "";
+  if (action) q.set("action", action);
+  if (actor) q.set("actor_id", actor);
+  if (from) q.set("from", String(new Date(from + "T00:00:00").getTime()));
+  if (to) q.set("to", String(new Date(to + "T23:59:59").getTime()));
+  const qs = q.toString();
+  window.location.href = "/api/admin/audit-log/export" + (qs ? "?" + qs : "");
+}
+
+// ---- Pilot launch (v2.2) ----
+let lastPilotReport = null;
+async function loadPilot() {
+  // Pilot settings form (from /api/settings).
+  try {
+    const s = (await api("/api/settings")).settings || {};
+    $("pilot-mode").checked = String(s.pilot_mode) === "1";
+    $("pilot-chunian-only").checked = String(s.pilot_chunian_only) === "1";
+    $("pilot-max-drivers").value = s.pilot_max_drivers ?? 10;
+    $("pilot-max-riders").value = s.pilot_max_riders ?? 20;
+  } catch (e) { handleApiError(e); }
+  loadPilotStatus();
+  loadPilotWhitelist();
+}
+async function loadPilotStatus() {
+  const el = $("pilot-status-out");
+  if (!el) return;
+  el.innerHTML = `<p class="loading">${escapeHtml(t("loading"))}</p>`;
+  try {
+    const d = await api("/api/admin/pilot-status");
+    const sos = (d.open_sos || []).map((x) => `<div class="row-item" style="border-left:4px solid #d00"><b>🚨 SOS</b> — ${escapeHtml(t("ride"))} #${Number(x.ride_id)} • ${escapeHtml(x.user_name || "")} (${escapeHtml(x.user_phone || "")}) • ${escapeHtml(x.message || "")} • ${escapeHtml(fmtDate(x.created_at))}</div>`).join("");
+    el.innerHTML = `<div class="stats">`
+      + `<div class="stat"><div class="label">Pilot mode</div><div class="value">${d.pilot_mode ? "ON" : "OFF"}</div></div>`
+      + `<div class="stat"><div class="label">Drivers whitelisted</div><div class="value">${Number(d.drivers.whitelisted)} / ${Number(d.caps.drivers)}</div></div>`
+      + `<div class="stat"><div class="label">Drivers signed up</div><div class="value">${Number(d.drivers.signed_up)}</div></div>`
+      + `<div class="stat"><div class="label">Drivers verified</div><div class="value">${Number(d.drivers.verified)}</div></div>`
+      + `<div class="stat"><div class="label">Drivers online</div><div class="value">${Number(d.drivers.online)}</div></div>`
+      + `<div class="stat"><div class="label">Riders whitelisted</div><div class="value">${Number(d.riders.whitelisted)} / ${Number(d.caps.riders)}</div></div>`
+      + `<div class="stat"><div class="label">Riders signed up</div><div class="value">${Number(d.riders.signed_up)}</div></div>`
+      + `<div class="stat"><div class="label">Rides today — completed</div><div class="value">${Number(d.rides_today.completed)}</div></div>`
+      + `<div class="stat"><div class="label">Rides today — requested</div><div class="value">${Number(d.rides_today.requested)}</div></div>`
+      + `<div class="stat"><div class="label">Rides today — cancelled</div><div class="value">${Number(d.rides_today.cancelled)}</div></div>`
+      + `<div class="stat"><div class="label">Rides today — failed</div><div class="value">${Number(d.rides_today.failed)}</div></div>`
+      + `<div class="stat"><div class="label">Open complaints</div><div class="value">${Number(d.open_complaints)}</div></div>`
+      + `<div class="stat"><div class="label">Open SOS alerts</div><div class="value">${Number((d.open_sos || []).length)}</div></div>`
+      + `<div class="stat"><div class="label">Pending top-ups</div><div class="value">${Number(d.pending.topups)}</div></div>`
+      + `<div class="stat"><div class="label">Pending withdrawals</div><div class="value">${Number(d.pending.withdrawals)}</div></div>`
+      + `<div class="stat"><div class="label">Wallet — drivers</div><div class="value">Rs ${Number(d.wallets.drivers)}</div></div>`
+      + `<div class="stat"><div class="label">Wallet — riders</div><div class="value">Rs ${Number(d.wallets.riders)}</div></div>`
+      + `</div>`
+      + (sos ? `<h3 style="margin-top:12px">🚨 SOS</h3>` + sos : "");
+  } catch (e) {
+    if (e && e.status === 401) { showLogin(t("err_session")); return; }
+    el.innerHTML = `<p class="inline-error">${escapeHtml((e && e.message) || t("err_load"))}</p>`;
+  }
+}
+async function loadPilotWhitelist() {
+  const el = $("pilot-whitelist-out");
+  if (!el) return;
+  el.innerHTML = `<p class="loading">${escapeHtml(t("loading"))}</p>`;
+  try {
+    const d = await api("/api/admin/pilot-whitelist");
+    if (!d.whitelist.length) { el.innerHTML = `<div class="empty">${escapeHtml(t("pilot_empty"))}</div>`; return; }
+    el.innerHTML = d.whitelist.map((w) => `<div class="row-item">
+      <b>${escapeHtml(w.phone)}</b> — ${escapeHtml(w.role)} • ${statusBadge(w.status)}
+      <div class="row-actions"><button type="button" class="danger small" data-whitelist-remove="${Number(w.id)}">${escapeHtml(t("pilot_remove"))}</button></div></div>`).join("");
+  } catch (e) { handleApiError(e); el.innerHTML = `<p class="inline-error">${escapeHtml((e && e.message) || t("err_load"))}</p>`; }
+}
+async function addWhitelist(btn) {
+  const phone = $("pilot-phone").value.trim();
+  const role = $("pilot-role").value;
+  const err = $("pilot-error");
+  err.textContent = "";
+  if (!phone) { err.textContent = t("err_pilot_fields"); return; }
+  setBusy(btn, true, "…");
+  try {
+    await api("/api/admin/pilot-whitelist", { method: "POST", body: JSON.stringify({ phone, role }) });
+    toast(t("toast_whitelist_added"), "ok");
+    $("pilot-phone").value = "";
+    loadPilotWhitelist(); loadPilotStatus();
+  } catch (e) { handleApiError(e, err); }
+  finally { setBusy(btn, false); btn.textContent = t("pilot_add_btn"); }
+}
+async function removeWhitelist(id) {
+  try {
+    await api(`/api/admin/pilot-whitelist/${id}`, { method: "DELETE" });
+    toast(t("toast_whitelist_removed"), "ok");
+    loadPilotWhitelist(); loadPilotStatus();
+  } catch (e) { handleApiError(e); }
+}
+async function savePilotSettings(btn) {
+  const err = $("pilot-error");
+  err.textContent = "";
+  $("pilot-out").textContent = "";
+  const body = {
+    pilot_mode: $("pilot-mode").checked ? "1" : "0",
+    pilot_chunian_only: $("pilot-chunian-only").checked ? "1" : "0",
+    pilot_max_drivers: $("pilot-max-drivers").value,
+    pilot_max_riders: $("pilot-max-riders").value,
+  };
+  setBusy(btn, true, "…");
+  try {
+    await api("/api/admin/settings", { method: "POST", body: JSON.stringify(body) });
+    $("pilot-out").textContent = t("toast_pilot_saved");
+    toast(t("toast_pilot_saved"), "ok");
+    loadPilotStatus();
+  } catch (e) { handleApiError(e, err); }
+  finally { setBusy(btn, false); btn.textContent = t("pilot_save"); }
+}
+async function loadPilotReport() {
+  const el = $("pilot-report-out");
+  el.innerHTML = `<p class="loading">${escapeHtml(t("loading"))}</p>`;
+  try {
+    const days = Number($("pilot-report-days").value || 7);
+    const d = await api(`/api/admin/pilot-report?days=${days}`);
+    lastPilotReport = d;
+    const fin = d.financials || {};
+    const recon = d.reconciliation || {};
+    const checks = (recon.checks || []).map((c) => `<p>${c.ok ? "✓" : "✗"} <b>${escapeHtml(c.name)}</b> — ${escapeHtml(c.detail || "")}</p>`).join("");
+    el.innerHTML = `<p><b>${Number(days)} days:</b> ${Number(d.rides.total)} ${escapeHtml(t("rides")) || "rides"} • ${escapeHtml(t("completed_rides"))}: ${Number(d.rides.completed)} • ${escapeHtml(t("gross_fares"))} Rs ${Number(fin.gross_fares || 0)} • ${escapeHtml(t("platform_revenue"))} Rs ${Number(fin.commission_earned || 0)} • ${escapeHtml(t("tip"))} Rs ${Number(fin.tips || 0)}</p>`
+      + `<p>${escapeHtml(t("cancelled_rides") || "Cancelled")}: ${Number((d.cancelled_bookings || []).length)} • ${escapeHtml(t("failed_rides") || "Failed")}: ${Number((d.failed_bookings || []).length)} • ${escapeHtml(t("complaints_title"))}: ${Number(d.complaints.open)} open / ${Number(d.complaints.resolved)} resolved</p>`
+      + `<h3 style="margin-top:12px">${escapeHtml(t("by_driver"))}</h3>`
+      + ((d.ratings_by_driver || []).map((x) => `<p>${escapeHtml(x.name)}: ⭐ ${Number(x.avg_rating).toFixed(1)} (${Number(x.rating_count)})</p>`).join("") || `<div class="empty">${escapeHtml(t("empty_report"))}</div>`)
+      + `<h3 style="margin-top:12px">Reconciliation</h3>`
+      + `<p>${(recon.discrepancies || []).length ? escapeHtml(t("pilot_recon_mismatch")) : escapeHtml(t("pilot_recon_ok"))}</p>`
+      + checks
+      + `<h3 style="margin-top:12px">${escapeHtml(t("cancelled_rides") || "Cancelled bookings")}</h3>`
+      + ((d.cancelled_bookings || []).map((r) => `<p>#${Number(r.id)} — ${escapeHtml(r.pickup)} → ${escapeHtml(r.destination)} • ${escapeHtml(r.vehicle_type)} • ${escapeHtml(r.cancel_reason || t("unknown"))}</p>`).join("") || `<div class="empty">${escapeHtml(t("empty_rides"))}</div>`);
+  } catch (e) {
+    if (e && e.status === 401) { showLogin(t("err_session")); return; }
+    el.innerHTML = `<p class="inline-error">${escapeHtml((e && e.message) || t("err_load"))}</p>`;
+  }
+}
+function exportPilotReportCsv() {
+  if (!lastPilotReport) { toast(t("err_load"), "error"); return; }
+  const d = lastPilotReport;
+  const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const lines = [];
+  lines.push(["section", "key", "value"].join(","));
+  lines.push(["rides", "days", d.days].map(esc).join(","));
+  lines.push(["rides", "total", d.rides.total].map(esc).join(","));
+  lines.push(["rides", "completed", d.rides.completed].map(esc).join(","));
+  for (const [k, v] of Object.entries(d.rides.by_status || {})) lines.push(["rides_by_status", k, v].map(esc).join(","));
+  for (const v of d.rides.by_vehicle || []) lines.push(["rides_by_vehicle", v.vehicle_type, `${v.n} rides, Rs ${v.gross}`].map(esc).join(","));
+  lines.push(["financials", "gross_fares", d.financials.gross_fares].map(esc).join(","));
+  lines.push(["financials", "commission_earned", d.financials.commission_earned].map(esc).join(","));
+  lines.push(["financials", "tips", d.financials.tips].map(esc).join(","));
+  for (const c of (d.reconciliation.checks || [])) lines.push(["reconciliation", c.name, c.ok ? "OK" : `MISMATCH (expected ${c.expected}, actual ${c.actual})`].map(esc).join(","));
+  for (const r of d.cancelled_bookings || []) lines.push(["cancelled", `#${r.id}`, `${r.pickup} -> ${r.destination}, ${r.vehicle_type}, reason: ${r.cancel_reason || "—"}`].map(esc).join(","));
+  for (const r of d.failed_bookings || []) lines.push(["failed", `#${r.id}`, `${r.pickup} -> ${r.destination}, ${r.vehicle_type}`].map(esc).join(","));
+  for (const x of d.ratings_by_driver || []) lines.push(["rating_by_driver", x.name, `${Number(x.avg_rating).toFixed(1)} (${x.rating_count})`].map(esc).join(","));
+  for (const c of (d.feedback.complaints || [])) lines.push(["complaint", `#${c.id}`, `${c.kind}: ${c.message || ""} [${c.status}]`].map(esc).join(","));
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "chunian-ride-pilot-report.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // ---- Security ----
@@ -1386,6 +1657,13 @@ $("refund-btn").addEventListener("click", (e) => submitRefund(e.currentTarget));
 $("promo-create-btn").addEventListener("click", (e) => createPromo(e.currentTarget));
 $("city-add-btn").addEventListener("click", (e) => addCity(e.currentTarget));
 $("settings-save-btn").addEventListener("click", (e) => saveSettings(e.currentTarget));
+// Pilot (v2.2)
+$("pilot-save-btn").addEventListener("click", (e) => savePilotSettings(e.currentTarget));
+$("pilot-add-btn").addEventListener("click", (e) => addWhitelist(e.currentTarget));
+$("pilot-report-btn").addEventListener("click", loadPilotReport);
+$("pilot-export-btn").addEventListener("click", exportPilotReportCsv);
+$("audit-filter-btn").addEventListener("click", loadAudit);
+$("audit-export-btn").addEventListener("click", exportAuditCsv);
 $("pw-change-btn").addEventListener("click", (e) => changePassword(e.currentTarget));
 $("demo-disable-btn").addEventListener("click", (e) => disableDemo(e.currentTarget));
 
@@ -1409,6 +1687,8 @@ document.addEventListener("click", (e) => {
   if (cp) { resolveComplaint(Number(cp.dataset.id)); return; }
   const ct = e.target.closest("[data-city-action]");
   if (ct) { cityAction(Number(ct.dataset.id), ct.dataset.cityAction); return; }
+  const wl = e.target.closest("[data-whitelist-remove]");
+  if (wl) { removeWhitelist(Number(wl.dataset.whitelistRemove)); return; }
 });
 
 applyLang();

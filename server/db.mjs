@@ -58,6 +58,13 @@ export const DEFAULT_SETTINGS = {
   min_withdrawal: "100",
   support_phone: "",
   support_whatsapp: "",
+  // Pilot launch (Phase 3, v2.2) — controlled rollout, Chunian only.
+  // pilot_mode "1" = public signup closed; only whitelisted phones can
+  // register. pilot_chunian_only "1" = rides restricted to Chunian City.
+  pilot_mode: "1",
+  pilot_max_drivers: "10",
+  pilot_max_riders: "20",
+  pilot_chunian_only: "1",
 };
 
 const STATEMENTS = [
@@ -321,6 +328,20 @@ const STATEMENTS = [
     home_address TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
   )`,
+  // Pilot whitelist (Phase 3, v2.2) — the ONLY phones allowed to sign up
+  // while pilot_mode is ON. status: 'pending' (invited, not signed up yet)
+  // | 'approved' (account created) | 'revoked' (removed by the owner).
+  // One row per (phone, role); caps are enforced in the API layer.
+  `CREATE TABLE IF NOT EXISTS pilot_whitelist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'rider',
+    status TEXT NOT NULL DEFAULT 'pending',
+    added_by INTEGER,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_whitelist_phone_role ON pilot_whitelist(phone, role)`,
+  `CREATE INDEX IF NOT EXISTS idx_whitelist_role_status ON pilot_whitelist(role, status)`,
 ];
 
 // Additive column migrations — safe to re-run on every boot (idempotent).
@@ -335,6 +356,7 @@ const COLUMN_MIGRATIONS = [
   ["rides", "tip_amount INTEGER NOT NULL DEFAULT 0"],
   ["rides", "promo_code TEXT NOT NULL DEFAULT ''"],
   ["rides", "discount_amount INTEGER NOT NULL DEFAULT 0"],
+  ["rides", "cancel_reason TEXT NOT NULL DEFAULT ''"],
 ];
 
 function haversineKm(a, b) {
@@ -548,6 +570,63 @@ export function promoDiscount(baseFare, promo) {
   const base = Math.max(1, Math.round(Number(baseFare) || 0));
   if (promo.discount_type === "fixed") return Math.min(Number(promo.discount_value), base - 1);
   return Math.min(base - 1, Math.round((base * Number(promo.discount_value)) / 100));
+}
+
+// ---- Pilot launch (Phase 3, v2.2) ----
+// Chunian-only lock: while pilot mode is ON, rides may only run inside
+// Chunian City. Pickup may be "Chunian City" or the rider's phone GPS
+// ("Current location" — the pilot group is in Chunian by definition, and
+// the driver sees the rider's live GPS pin before accepting). Destination
+// must be Chunian City — every intercity place is rejected.
+export const PILOT_ALLOWED_PLACES = ["Chunian City"];
+export const PILOT_ALLOWED_PICKUPS = ["Chunian City", "Current location"];
+
+export function pilotLocked(settings) {
+  return String(settings.pilot_mode) === "1" || String(settings.pilot_chunian_only) === "1";
+}
+
+// Returns the (Roman Urdu) error string when a pickup/destination pair is
+// outside the pilot area, or null when it is allowed.
+export function pilotAreaError(settings, pickup, destination) {
+  if (!pilotLocked(settings)) return null;
+  if (pickup && !PILOT_ALLOWED_PICKUPS.includes(String(pickup))) {
+    return "Pilot phase: sirf Chunian City ki rides — intercity rides abhi band hain";
+  }
+  if (destination && !PILOT_ALLOWED_PLACES.includes(String(destination))) {
+    return "Pilot phase: sirf Chunian City ki rides — intercity rides abhi band hain";
+  }
+  return null;
+}
+
+export function pilotCap(role, settings) {
+  return role === "driver"
+    ? Math.max(0, Number(settings.pilot_max_drivers || 10))
+    : Math.max(0, Number(settings.pilot_max_riders || 20));
+}
+
+// ---- Driver document verification gate (Phase 3, v2.2) ----
+// Required documents are exactly three: CNIC, driving licence, vehicle
+// registration. CNIC is satisfied by a single "cnic" photo OR by BOTH
+// "cnic_front" and "cnic_back" (legacy two-photo flow). "other" uploads
+// never count toward the gate. Returns per-doc booleans + missing list.
+export async function getDocChecklist(txOrClient, driverUserId) {
+  const rows = await txOrClient.execute({
+    sql: "SELECT doc_type, status FROM documents WHERE driver_id = ?",
+    args: [Number(driverUserId)],
+  });
+  const approved = new Set(
+    rows.rows.filter((r) => r.status === "approved").map((r) => r.doc_type)
+  );
+  const byType = {};
+  for (const r of rows.rows) byType[r.doc_type] = r.status;
+  const cnic = approved.has("cnic") || (approved.has("cnic_front") && approved.has("cnic_back"));
+  const licence = approved.has("licence");
+  const vehicle = approved.has("vehicle");
+  const missing = [];
+  if (!cnic) missing.push("CNIC");
+  if (!licence) missing.push("licence");
+  if (!vehicle) missing.push("vehicle");
+  return { cnic, licence, vehicle, all: missing.length === 0, missing, byType };
 }
 
 // ---- Withdrawals (v2.1) ----

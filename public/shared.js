@@ -138,15 +138,19 @@ const STRINGS = {
     withdraw_enter_number: "Please enter your JazzCash number.",
     withdraw_min: "Minimum withdrawal is Rs {min}.",
     withdraw_exceeds: "Withdrawal is more than your wallet balance.",
-    // Documents — photo upload (v2.1)
+    // Documents — photo upload (v2.1; vehicle document added in v2.2)
     docs_title: "Documents — photo upload",
-    docs_note: "Upload clear photos of your CNIC (front + back) and driving licence. Photos are stored securely and only the owner can see them.",
-    doc_cnic_front: "CNIC — front", doc_cnic_back: "CNIC — back", doc_licence: "Driving licence",
+    docs_note: "Upload clear photos of your CNIC (front + back), driving licence and vehicle registration document. Photos are stored securely and only the owner can see them. All three are required before your account can be approved.",
+    doc_cnic_front: "CNIC — front", doc_cnic_back: "CNIC — back", doc_cnic: "CNIC", doc_licence: "Driving licence", doc_vehicle: "Vehicle registration document", doc_other: "Other document",
     doc_upload: "Upload photo",
     doc_uploaded: "{doc} uploaded — status: pending approval.",
     doc_approved: "Approved", doc_rejected: "Rejected — please re-upload", doc_pending: "Pending approval",
     doc_too_large: "Photo is too large — max 1.5 MB after compression.",
     doc_bad_type: "Only JPG or PNG photos are allowed.",
+    docs_checklist: "Verification: CNIC {cnic} • Licence {licence} • Vehicle {vehicle}",
+    docs_checklist_ok: "✓",
+    docs_checklist_no: "✗",
+    pilot_only_note: "Pilot phase: rides are Chunian City only — intercity rides are not available yet.",
   },
   ur: {
     app_name: "چونیاں رائیڈ", tagline: "چونیاں • پتوکی • قصور • لاہور",
@@ -281,13 +285,17 @@ const STRINGS = {
     withdraw_exceeds: "نکالنے کی رقم آپ کے والیٹ بیلنس سے زیادہ ہے۔",
     // Documents — photo upload (v2.1)
     docs_title: "دستاویزات — تصویر اپ لوڈ کریں",
-    docs_note: "اپنے شناختی کارڈ (سامنے + پیچھے) اور ڈرائیونگ لائسنس کی واضح تصویریں اپ لوڈ کریں۔ تصویریں محفوظ طریقے سے رکھی جاتی ہیں اور صرف مالک دیکھ سکتا ہے۔",
-    doc_cnic_front: "شناختی کارڈ — سامنے", doc_cnic_back: "شناختی کارڈ — پیچھے", doc_licence: "ڈرائیونگ لائسنس",
+    docs_note: "اپنے شناختی کارڈ (سامنے + پیچھے)، ڈرائیونگ لائسنس اور گاڑی کی رجسٹریشن دستاویز کی واضح تصویریں اپ لوڈ کریں۔ تصویریں محفوظ طریقے سے رکھی جاتی ہیں اور صرف مالک دیکھ سکتا ہے۔ اکاؤنٹ منظور ہونے سے پہلے تینوں ضروری ہیں۔",
+    doc_cnic_front: "شناختی کارڈ — سامنے", doc_cnic_back: "شناختی کارڈ — پیچھے", doc_cnic: "شناختی کارڈ", doc_licence: "ڈرائیونگ لائسنس", doc_vehicle: "گاڑی کی رجسٹریشن دستاویز", doc_other: "دیگر دستاویز",
     doc_upload: "تصویر اپ لوڈ کریں",
     doc_uploaded: "{doc} اپ لوڈ ہو گئی — حالت: منظوری زیر التواء۔",
     doc_approved: "منظور شدہ", doc_rejected: "مسترد — دوبارہ اپ لوڈ کریں", doc_pending: "منظوری زیر التواء",
     doc_too_large: "تصویر بہت بڑی ہے — کمپریشن کے بعد زیادہ سے زیادہ 1.5 MB۔",
     doc_bad_type: "صرف JPG یا PNG تصویر چلتی ہے۔",
+    docs_checklist: "تصدیق: شناختی کارڈ {cnic} • لائسنس {licence} • گاڑی {vehicle}",
+    docs_checklist_ok: "✓",
+    docs_checklist_no: "✗",
+    pilot_only_note: "پائلٹ مرحلہ: صرف چونیاں شہر کی رائیڈز — بین شہر رائیڈز ابھی بند ہیں۔",
   },
 };
 
@@ -317,6 +325,7 @@ const NOTIF_TEMPLATES = {
     refund_credited: { title: "Refund credited", body: "Rs {amount} refunded to your wallet. {reason}" },
     doc_approved: { title: "Document approved", body: "Your {doc} was approved." },
     doc_rejected: { title: "Document rejected", body: "Your {doc} was rejected. Please re-upload." },
+    sos_alert: { title: "🚨 SOS ALERT — Ride #{ride}", body: "Emergency! {message}" },
   },
   ur: {
     offer_received: { title: "رائڈ #{ride} پر نئی پیشکش", body: "{driver} نے روپے {fare} کی پیشکش کی۔" },
@@ -339,6 +348,7 @@ const NOTIF_TEMPLATES = {
     refund_credited: { title: "ریفنڈ جمع ہو گیا", body: "روپے {amount} آپ کے والیٹ میں واپس آ گئے۔ {reason}" },
     doc_approved: { title: "دستاویز منظور", body: "آپ کی {doc} منظور ہو گئی۔" },
     doc_rejected: { title: "دستاویز مسترد", body: "آپ کی {doc} مسترد ہو گئی۔ براہ کرم دوبارہ اپ لوڈ کریں۔" },
+    sos_alert: { title: "🚨 SOS الرٹ — رائیڈ #{ride}", body: "ایمرجنسی! {message}" },
   },
 };
 
@@ -502,6 +512,17 @@ const ERR_MAP = {
   "Sirf driver apni documents upload kar sakta hai": { en: "Only a driver can upload their own documents.", ur: "صرف ڈرائیور ہی اپنی دستاویزات اپ لوڈ کر سکتا ہے۔" },
   "Sirf driver apni documents dekh sakta hai": { en: "Only a driver can see their own documents.", ur: "صرف ڈرائیور ہی اپنی دستاویزات دیکھ سکتا ہے۔" },
   "Sirf user account ka top-up yahan hota hai": { en: "Only a user account can top up here.", ur: "یہاں صرف صارف اکاؤنٹ کا ٹاپ اپ ہوتا ہے۔" },
+  // v2.2 — pilot launch
+  "Pilot registration sirf whitelist par hai — owner se rabta karein": { en: "Pilot registration only — contact the owner.", ur: "پائلٹ رجسٹریشن صرف وائٹ لسٹ پر ہے — مالک سے رابطہ کریں۔" },
+  "Pilot phase: sirf Chunian City ki rides — intercity rides abhi band hain": { en: "Pilot phase: rides are Chunian City only — intercity rides are not available yet.", ur: "پائلٹ مرحلہ: صرف چونیاں شہر کی رائیڈز — بین شہر رائیڈز ابھی بند ہیں۔" },
+  "Pilot limit poori ho gayi — registration band hai": { en: "The pilot limit is full — registration is closed.", ur: "پائلٹ کی حد پوری ہو گئی — رجسٹریشن بند ہے۔" },
+  "Pilot driver limit poori ho gayi — mazeed drivers add nahi ho sakte": { en: "The pilot driver limit is full — no more drivers can be added.", ur: "پائلٹ ڈرائیور کی حد پوری ہو گئی — مزید ڈرائیور شامل نہیں ہو سکتے۔" },
+  "Pilot rider limit poori ho gayi — mazeed riders add nahi ho sakte": { en: "The pilot rider limit is full — no more riders can be added.", ur: "پائلٹ رائیڈر کی حد پوری ہو گئی — مزید رائیڈر شامل نہیں ہو سکتے۔" },
+  "Is phone par whitelist entry pehle se hai": { en: "This phone is already on the whitelist.", ur: "یہ فون پہلے سے وائٹ لسٹ پر ہے۔" },
+  "Driver ki documents verify nahi — pehle documents approve karwain": { en: "The driver's documents are not verified yet — get the documents approved first.", ur: "ڈرائیور کی دستاویزات ابھی تصدیق شدہ نہیں — پہلے دستاویزات منظور کروائیں۔" },
+  "whitelist entry not found": { en: "Whitelist entry not found.", ur: "وائٹ لسٹ انٹری نہیں ملی۔" },
+  "pilot_mode must be 0 or 1": { en: "Pilot mode must be 0 or 1.", ur: "پائلٹ موڈ 0 یا 1 ہونا چاہیے۔" },
+  "pilot cap must be a number": { en: "The pilot cap must be a number.", ur: "پائلٹ کی حد ایک عدد ہونی چاہیے۔" },
 };
 function translateError(msg) {
   const m = ERR_MAP[msg];
@@ -596,7 +617,7 @@ function notifText(n) {
   const tpl = (NOTIF_TEMPLATES[LANG] && NOTIF_TEMPLATES[LANG][n.type]) || NOTIF_TEMPLATES.en[n.type];
   if (!tpl) return { title: n.type, body: "" };
   const vars = { ...(n.params || {}) };
-  if (vars.doc) vars.doc = t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", licence: "doc_licence" }[vars.doc] || "doc_licence");
+  if (vars.doc) vars.doc = t({ cnic_front: "doc_cnic_front", cnic_back: "doc_cnic_back", cnic: "doc_cnic", licence: "doc_licence", vehicle: "doc_vehicle", other: "doc_other" }[vars.doc] || "doc_licence");
   if (vars.when) { try { vars.when = fmtSched(new Date(vars.when).getTime()); } catch { /* keep raw */ } }
   let title = tpl.title, body = tpl.body;
   for (const [k, v] of Object.entries(vars)) {

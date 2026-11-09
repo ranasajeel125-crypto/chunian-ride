@@ -56,20 +56,29 @@ function setPin(which, p) {
 async function initMap() {
   const data = await api("/api/places");
   places = data.places || [];
+  // Pilot lock (v2.2): rides are Chunian City only while pilot mode is ON.
+  // Pickup = phone GPS or Chunian City; destination = Chunian City only.
+  // The server still enforces this (fare + ride-create return 400 for any
+  // intercity place) — this only keeps the UI from offering it.
+  const pilotLocked = String(settings.pilot_mode) === "1" || String(settings.pilot_chunian_only) === "1";
   const sel1 = $("pickup"), sel2 = $("destination");
   const gpsOpt = document.createElement("option");
   gpsOpt.value = "__gps__"; gpsOpt.textContent = t("current_location");
   sel1.appendChild(gpsOpt);
   places.forEach((p) => {
+    if (pilotLocked && p.name !== "Chunian City") return;
     const o1 = document.createElement("option"); o1.value = p.name; o1.textContent = p.name + (p.km != null ? ` (${p.km} km)` : "");
     const o2 = o1.cloneNode(true);
     sel1.appendChild(o1); sel2.appendChild(o2);
   });
-  sel1.value = "__gps__"; sel2.value = "Pattoki";
+  sel1.value = "__gps__"; sel2.value = pilotLocked ? "Chunian City" : "Pattoki";
   map = initBaseMap("map");
   markers = addPlacePins(map, places, (p) => {
     if (!sel1.dataset.locked) { sel1.value = p.name; sel1.dataset.locked = "1"; gpsPos = null; setPin("pickup", p); }
-    else { sel2.value = p.name; delete sel1.dataset.locked; setPin("dest", p); }
+    else {
+      if (pilotLocked && p.name !== "Chunian City") { toast(t("pilot_only_note"), "error"); return; }
+      sel2.value = p.name; delete sel1.dataset.locked; setPin("dest", p);
+    }
     onRouteChange();
   });
   // GPS pickup by default; fall back to Chunian City if GPS is unavailable.

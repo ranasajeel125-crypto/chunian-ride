@@ -16,5 +16,5 @@
     "i18n-check": "node scripts/i18n-check.mjs"
   },
   "type": "module",
-  "version": "2.1.0"
+  "version": "2.2.0"
 }
