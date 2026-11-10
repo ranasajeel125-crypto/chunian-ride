@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0D1748">
+<title>Chunian Ride — Google login | Phone number</title>
+<meta name="description" content="Finish Google sign-in for Chunian Ride — enter your phone number for the pilot check.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css?v=9">
+<link rel="icon" type="image/png" href="/favicon.png?v=2">
+<link rel="manifest" href="/manifest.json">
+</head>
+<body>
+<header class="site">
+  <div class="header-inner">
+    <a class="brand" href="/">
+      <img src="/logo.png?v=2" alt="Chunian Ride logo" class="logo-img">
+      <div class="brand-text">
+        <div class="brand-name">Chunian Ride</div>
+        <div class="brand-sub">Chunian • Pattoki • Kasur • Lahore</div>
+      </div>
+    </a>
+    <div class="header-actions">
+      <div class="lang-switch" role="group" aria-label="Language / زبان">
+        <button type="button" class="lang-opt" data-lang="en">EN</button>
+        <button type="button" class="lang-opt" data-lang="ur">اردو</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="card" id="google-phone-card">
+    <p class="eyebrow"><span data-i18n="google_account_label">Google account</span></p>
+    <h2 data-i18n="google_phone_title">Apna phone number likhein</h2>
+    <p class="card-sub" id="google-who"></p>
+    <p class="card-sub" data-i18n="google_phone_sub">Pilot check ke liye phone number chahiye. Naya account hai to password khali chhor dein — purana account hai to uska password likhein, Google us se link ho jayega.</p>
+    <input id="google-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03XX-XXXXXXX" inputmode="tel" autocomplete="tel">
+    <input id="google-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)" autocomplete="current-password">
+    <p class="form-err" id="google-err" role="alert"></p>
+    <button class="primary" id="btn-google-continue" data-i18n="google_continue_btn">Continue</button>
+    <p class="muted"><a href="/rider" data-i18n="back_to_login">Back to login</a></p>
+  </div>
+</main>
+
+<script src="/shared.js?v=10"></script>
+<script>
+  // Google sign-in phone step (v2.5): the callback parks the Google
+  // identity server-side and lands here with a one-time token. The phone
+  // number is checked against the pilot whitelist before any account is
+  // created; an existing phone account links only with its password.
+  const q = new URLSearchParams(location.search);
+  const token = q.get("token") || "";
+  initLangToggle();
+  applyI18n();
+  async function loadPending() {
+    if (!token) { setErr($("google-err"), t("google_phone_title")); return; }
+    try {
+      const d = await api("/api/auth/google/pending?token=" + encodeURIComponent(token));
+      $("google-who").textContent = (d.name || "") + (d.email ? " • " + d.email : "");
+    } catch (e) {
+      setErr($("google-err"), e.message);
+      $("btn-google-continue").disabled = true;
+    }
+  }
+  $("btn-google-continue").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const phone = $("google-phone").value.trim();
+    const password = $("google-password").value;
+    if (!phone) { setErr($("google-err"), t("err_phone_pw")); return; }
+    setLoading(btn, true);
+    try {
+      const d = await api("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token, phone, password }) });
+      location.href = d.redirect || "/rider";
+    } catch (err) { setErr($("google-err"), err.message); }
+    finally { setLoading(btn, false); }
+  });
+  loadPending();
+</script>
+</body>
+</html>

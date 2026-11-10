@@ -10,6 +10,7 @@
 // the privacy fix (no rider phone in driver requests).
 // Usage: npm run smoke
 import { spawn } from "node:child_process";
+import http from "node:http";
 import https from "node:https";
 import { randomBytes, generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
@@ -530,7 +531,7 @@ async function main() {
 
   // ================= v2.2 =================
   const health21 = await call("/api/health");
-  check("version is 2.4.1", health21.version === "2.4.1", `got ${health21.version}`);
+  check("version is 2.5.0", health21.version === "2.5.0", `got ${health21.version}`);
 
   // ---- PWA ----
   const manifestRes = await fetch(BASE + "/manifest.json");
@@ -542,9 +543,10 @@ async function main() {
   check("icon 512 serves 200", (await fetch(BASE + "/icons/icon-512.png")).status === 200);
   const swRes = await fetch(BASE + "/sw.js");
   const swText = await swRes.text();
-  check("sw.js serves 200 with versioned cache chunian-ride-v2.4.1", swRes.status === 200 && swText.includes("chunian-ride-v2.4.1"));
+  check("sw.js serves 200 with versioned cache chunian-ride-v2.5.0", swRes.status === 200 && swText.includes("chunian-ride-v2.5.0"));
   const landing21 = await (await fetch(BASE + "/")).text();
-  check("landing footer says v2.4.1 + links manifest", landing21.includes("Chunian Ride v2.4.1") && landing21.includes("/manifest.json"));
+  check("landing footer says v2.5 + links manifest", landing21.includes("Chunian Ride v2.5") && landing21.includes("/manifest.json"));
+
   const riderPage21 = await (await fetch(BASE + "/rider")).text();
   check("rider page has promo input + notification bell + rider top-up card", riderPage21.includes("promo-code") && riderPage21.includes("notif-bell") && riderPage21.includes("rider-topup-amount"));
   // v2.4: GPS must start only on a real tap — no silent load-time call
@@ -552,7 +554,7 @@ async function main() {
   // the settings hint + a Retry button instead of a dead end.
   const riderJs24 = await (await fetch(BASE + "/rider.js")).text();
   check("rider.js v2.4 GPS: no silent load-time request, tap calls getCurrentPosition, denial has retry", !riderJs24.includes("requestGpsPickup(true)") && riderJs24.includes("function requestGpsPickup()") && riderJs24.includes("showGpsDenied") && riderJs24.includes("gps-retry"));
-  // v2.4.1: toast() must show only ONE toast at a time — repeated GPS
+  // v2.5.0: toast() must show only ONE toast at a time — repeated GPS
   // denials used to stack identical red banners (six on the owner's phone).
   const sharedJs241 = await (await fetch(BASE + "/shared.js")).text();
   check("toast() replaces previous toast (no stacking)", sharedJs241.includes("box.replaceChildren()"));
@@ -932,7 +934,7 @@ async function main() {
   // All v2.3 tests run on the pilot accounts (pilot mode is ON, bike,
   // Chunian City -> Chunian City) so nothing after them depends on state.
   const health23 = await call("/api/health");
-  check("v2.4.1 health version is 2.4.1", health23.version === "2.4.1", `got ${health23.version}`);
+  check("v2.5.0 health version is 2.5.0", health23.version === "2.5.0", `got ${health23.version}`);
   // Valid Web Push subscription keys for the subscribe tests: web-push
   // rejects anything else at send time (p256dh must be a 65-byte P-256
   // point, auth 16 bytes) — a made-up key string never reaches the wire.
@@ -1222,6 +1224,200 @@ async function main() {
   await expectFail("rider cannot list client errors -> 403", () => call("/api/admin/client-errors", { session: "pilotRider" }), 403);
   await expectFail("client error without message -> 400", () => call("/api/client-error", { method: "POST", body: JSON.stringify({ message: "" }), session: "pilotRider" }), 400);
   await expectFail("unauthenticated client error -> 401", () => call("/api/client-error", { method: "POST", body: JSON.stringify({ message: "x" }) }), 401);
+
+  // ---- Google sign-in (v2.5, free OAuth 2.0) ----
+  // Own fresh-DB server (port 3457) + a local fake Google (port 3459) so
+  // the full authorization-code flow runs without real Google credentials.
+  // The stub answers by code: "rider-code" -> Google Rider,
+  // "driver-code" -> Google Driver, "driver-code-2" -> Google Driver 2.
+  {
+    const gDb = path.join(dataDir, "smoke-google.db");
+    if (fs.existsSync(gDb)) fs.unlinkSync(gDb);
+    if (fs.existsSync(gDb + "-journal")) fs.unlinkSync(gDb + "-journal");
+    const fakeGoogle = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        if (req.url === "/token" && req.method === "POST") {
+          const params = new URLSearchParams(body);
+          fakeGoogle.lastToken = { code: params.get("code"), redirect_uri: params.get("redirect_uri") };
+          const code = params.get("code") || "";
+          const access = code === "driver-code" ? "tok-driver-code" : code === "driver-code-2" ? "tok-driver-code-2" : "tok-rider-code";
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ access_token: access, token_type: "Bearer", expires_in: 3600 }));
+        }
+        if (req.url === "/userinfo") {
+          const tok = (req.headers.authorization || "").replace("Bearer ", "");
+          const who = tok === "tok-driver-code"
+            ? { sub: "google-sub-driver", email: "googledriver@example.com", name: "Google Driver" }
+            : tok === "tok-driver-code-2"
+              ? { sub: "google-sub-driver2", email: "googledriver2@example.com", name: "Google Driver 2" }
+              : { sub: "google-sub-rider", email: "googlerider@example.com", name: "Google Rider" };
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify(who));
+        }
+        res.writeHead(404); res.end();
+      });
+    });
+    await new Promise((r) => fakeGoogle.listen(3459, "127.0.0.1", r));
+    const gBase = "http://127.0.0.1:3457";
+    const waitHealthy = async (base) => {
+      for (let i = 0; i < 120; i++) {
+        try { const r = await fetch(base + "/api/health"); if (r.ok) return true; } catch {}
+        await sleep(500);
+      }
+      return false;
+    };
+    const gCall = async (p, opts = {}) => {
+      const headers = { "Content-Type": "application/json" };
+      if (opts.cookie) headers.Cookie = opts.cookie;
+      const res = await fetch(gBase + p, { headers, method: opts.method || "GET", body: opts.body, redirect: "manual" });
+      const text = await res.text();
+      let data = {};
+      try { data = JSON.parse(text); } catch {}
+      return { status: res.status, data, text, location: res.headers.get("location"), setCookie: res.headers.getSetCookie() };
+    };
+    const gCookie = (r) => (r.setCookie && r.setCookie[0] ? r.setCookie[0].split(";")[0] : "");
+    const startGoogle = async (role, source, code) => {
+      const s = await gCall(`/api/auth/google?role=${role}&source=${source}`);
+      check(`google start (${role}/${source}) -> 302 to accounts.google.com`, s.status === 302 && (s.location || "").startsWith("https://accounts.google.com/o/oauth2/v2/auth"), `got ${s.status} ${s.location}`);
+      const loc = new URL(s.location);
+      check("google start carries client_id + local redirect_uri", loc.searchParams.get("client_id") === "test-client-id.apps.googleusercontent.com" && loc.searchParams.get("redirect_uri") === `${gBase}/api/auth/google/callback`, loc.searchParams.get("redirect_uri"));
+      const state = loc.searchParams.get("state");
+      check("google start carries a 64-hex state", /^[0-9a-f]{64}$/.test(state || ""));
+      return gCall(`/api/auth/google/callback?code=${code}&state=${state}`);
+    };
+    let gChild = null;
+    try {
+      // Phase 1: Google NOT configured — button hidden, start rejected.
+      // Admin is set up here (fresh DB prints the one-time token once);
+      // the session survives the phase-2 restart (same DB file).
+      const gEnvOff = { ...process.env, PORT: "3457", TURSO_DATABASE_URL: "file:./data/smoke-google.db" };
+      delete gEnvOff.GOOGLE_CLIENT_ID; delete gEnvOff.GOOGLE_CLIENT_SECRET;
+      gChild = spawn("node", ["server/index.mjs"], { cwd: root, env: gEnvOff, stdio: ["ignore", "pipe", "pipe"] });
+      let gOut = "";
+      gChild.stdout.on("data", (d) => (gOut += d));
+      gChild.stderr.on("data", (d) => (gOut += d));
+      check("google server (unconfigured) boots", await waitHealthy(gBase));
+      const off = await gCall("/api/auth/google?role=rider");
+      check("google start without credentials -> 503", off.status === 503, `got ${off.status}`);
+      const offSettings = await gCall("/api/settings");
+      check("google_login_enabled is false when unconfigured", offSettings.data.google_login_enabled === false);
+      const riderHtml = await gCall("/rider");
+      check("rider page carries the Google button markup", riderHtml.status === 200 && riderHtml.text.includes('id="btn-google"') && riderHtml.text.includes("google_continue"));
+      const driverHtml = await gCall("/driver");
+      check("driver page carries the Google button markup", driverHtml.status === 200 && driverHtml.text.includes('id="btn-google"'));
+      const adminHtml = await gCall("/admin");
+      check("admin page has NO Google button (phone+password only)", adminHtml.status === 200 && !adminHtml.text.includes('id="btn-google"'));
+      const assetlinks = await gCall("/.well-known/assetlinks.json");
+      check("assetlinks.json served with package + cert fingerprint", assetlinks.status === 200 && assetlinks.text.includes("com.chunianride.app") && assetlinks.text.includes("19a11c27e7cc613271faec139ba9290140e576c5f95b50f24d3996eb9aab3e6a"), `got ${assetlinks.status}`);
+      const gToken = extractSetupToken(gOut);
+      check("google server generated its own setup token", typeof gToken === "string" && /^[0-9a-f]{64}$/.test(gToken || ""));
+      const gSetup = await gCall("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: gToken, name: "Owner", phone: "03266040350", password: "ownerpass" }) });
+      check("google server admin setup works", gSetup.status === 200, `got ${gSetup.status}`);
+      const gAdminCookie = gCookie(gSetup);
+      gChild.kill(); gChild = null; await sleep(300);
+
+      // Phase 2: Google configured (dummy client id/secret — NOT real
+      // credentials) against the fake Google stub. Pilot is ON by default.
+      const gEnv = {
+        ...process.env, PORT: "3457", TURSO_DATABASE_URL: "file:./data/smoke-google.db",
+        GOOGLE_CLIENT_ID: "test-client-id.apps.googleusercontent.com",
+        GOOGLE_CLIENT_SECRET: "test-secret-not-real",
+        GOOGLE_TOKEN_URL: "http://127.0.0.1:3459/token",
+        GOOGLE_USERINFO_URL: "http://127.0.0.1:3459/userinfo",
+      };
+      gChild = spawn("node", ["server/index.mjs"], { cwd: root, env: gEnv, stdio: ["ignore", "pipe", "pipe"] });
+      gOut = "";
+      gChild.stdout.on("data", (d) => (gOut += d));
+      gChild.stderr.on("data", (d) => (gOut += d));
+      check("google server (configured) boots", await waitHealthy(gBase));
+      const onSettings = await gCall("/api/settings");
+      check("google_login_enabled is true when configured", onSettings.data.google_login_enabled === true);
+      await gCall("/api/admin/pilot-whitelist", { method: "POST", body: JSON.stringify({ phone: "0309-7777777", role: "rider" }), cookie: gAdminCookie });
+
+      // Forged callback (bad state) fails before any Google call.
+      const badCb = await gCall("/api/auth/google/callback?code=rider-code&state=" + "0".repeat(64));
+      check("callback with unknown state -> 302 to rider with google_error", badCb.status === 302 && (badCb.location || "").includes("/rider?google_error="), `got ${badCb.status} ${badCb.location}`);
+
+      // New rider: callback -> phone step -> pilot 403 -> whitelist -> create.
+      const cb1 = await startGoogle("rider", "web", "rider-code");
+      check("token exchange sent the right code + redirect_uri to Google", fakeGoogle.lastToken && fakeGoogle.lastToken.code === "rider-code" && fakeGoogle.lastToken.redirect_uri === `${gBase}/api/auth/google/callback`, JSON.stringify(fakeGoogle.lastToken));
+      check("new rider callback -> 302 to /google-phone with token", cb1.status === 302 && (cb1.location || "").startsWith("/google-phone?token="), `got ${cb1.status} ${cb1.location}`);
+      const pendToken = new URL(cb1.location, gBase).searchParams.get("token");
+      const pendBad = await gCall("/api/auth/google/pending?token=badtoken");
+      check("pending lookup with bad token -> 404", pendBad.status === 404, `got ${pendBad.status}`);
+      const pend = await gCall(`/api/auth/google/pending?token=${pendToken}`);
+      check("pending lookup returns Google name/email/role", pend.status === 200 && pend.data.name === "Google Rider" && pend.data.email === "googlerider@example.com" && pend.data.role === "rider", JSON.stringify(pend.data));
+      const phoneNoWl = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: pendToken, phone: "0309-7777778" }) });
+      check("google phone step with non-whitelisted phone -> 403 pilot message", phoneNoWl.status === 403 && (phoneNoWl.data.error || "").includes("whitelist"), `got ${phoneNoWl.status} ${JSON.stringify(phoneNoWl.data)}`);
+      const phoneOk = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: pendToken, phone: "0309-7777777" }) });
+      check("google phone step with whitelisted phone -> 200 + redirect /rider + session", phoneOk.status === 200 && phoneOk.data.redirect === "/rider" && !!gCookie(phoneOk), JSON.stringify(phoneOk.data));
+      const gRiderCookie = gCookie(phoneOk);
+      const meG = await gCall("/api/auth/me", { cookie: gRiderCookie });
+      check("google-created rider session restores (phone + name from Google)", meG.status === 200 && meG.data.user && meG.data.user.phone === "03097777777" && meG.data.user.name === "Google Rider" && meG.data.user.role === "rider", JSON.stringify(meG.data.user));
+      const pendGone = await gCall(`/api/auth/google/pending?token=${pendToken}`);
+      check("pending token is single-use (gone after phone step)", pendGone.status === 404, `got ${pendGone.status}`);
+
+      // Returning Google rider: straight to /rider, no phone step.
+      const cb2 = await startGoogle("rider", "web", "rider-code");
+      check("returning google rider callback -> 302 straight to /rider", cb2.status === 302 && cb2.location === "/rider" && !!gCookie(cb2), `got ${cb2.status} ${cb2.location}`);
+
+      // Google-only account can add a phone password, then log in with it.
+      const pwSet = await gCall("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current: "", next: "googlepass123" }), cookie: gRiderCookie });
+      check("google rider sets a password via change-password", pwSet.status === 200, `got ${pwSet.status} ${JSON.stringify(pwSet.data)}`);
+      const pwLogin = await gCall("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0309-7777777", password: "googlepass123" }) });
+      check("phone+password login still works for the google-created rider", pwLogin.status === 200 && !!gCookie(pwLogin), `got ${pwLogin.status}`);
+
+      // Driver: link an existing driver account with its phone password.
+      const claim = await gCall("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0301-0000001", password: "driverpass1" }) });
+      check("demo driver 0301-0000001 claims account with a password", claim.status === 200 && claim.data.claimed === true, `got ${claim.status}`);
+      const cbD = await startGoogle("driver", "web", "driver-code");
+      check("driver callback -> 302 to /google-phone", cbD.status === 302 && (cbD.location || "").startsWith("/google-phone?token="), `got ${cbD.status} ${cbD.location}`);
+      const dToken = new URL(cbD.location, gBase).searchParams.get("token");
+      const linkBadPw = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: dToken, phone: "0301-0000001", password: "wrongpass" }) });
+      check("driver link with wrong phone password -> 401", linkBadPw.status === 401, `got ${linkBadPw.status}`);
+      const linkOk = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: dToken, phone: "0301-0000001", password: "driverpass1" }) });
+      check("driver link with right password -> 200 + redirect /driver + session", linkOk.status === 200 && linkOk.data.redirect === "/driver" && !!gCookie(linkOk), JSON.stringify(linkOk.data));
+      const meD = await gCall("/api/auth/me", { cookie: gCookie(linkOk) });
+      check("linked driver session restores as driver", meD.status === 200 && meD.data.user && meD.data.user.role === "driver", JSON.stringify(meD.data.user));
+
+      // Driver: a NEW driver account via Google is refused (owner-created only).
+      const cbD2 = await startGoogle("driver", "web", "driver-code-2");
+      const dToken2 = new URL(cbD2.location, gBase).searchParams.get("token");
+      const dNew = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: dToken2, phone: "0309-7777779" }) });
+      check("new driver via google -> 403 owner-created only", dNew.status === 403 && (dNew.data.error || "").includes("owner"), `got ${dNew.status} ${JSON.stringify(dNew.data)}`);
+
+      // APK return trip: callback -> done page -> return exchanges the token.
+      const cbApk = await startGoogle("rider", "apk", "rider-code");
+      check("apk-source callback -> 302 to /auth/google/done with token", cbApk.status === 302 && (cbApk.location || "").startsWith("/auth/google/done?token="), `got ${cbApk.status} ${cbApk.location}`);
+      const doneToken = new URL(cbApk.location, gBase).searchParams.get("token");
+      const done = await gCall(`/auth/google/done?token=${doneToken}`);
+      check("done page renders with a return link", done.status === 200 && done.text.includes("/auth/google/return?token=") && done.text.includes("Google login ho gaya"), `got ${done.status}`);
+      const ret = await gCall(`/auth/google/return?token=${doneToken}`);
+      check("return exchanges the token for a session + redirects /rider", ret.status === 302 && ret.location === "/rider" && !!gCookie(ret), `got ${ret.status} ${ret.location} cookie=${!!gCookie(ret)}`);
+      const ret2 = await gCall(`/auth/google/return?token=${doneToken}`);
+      check("login token is single-use (second return -> google_error)", ret2.status === 302 && (ret2.location || "").includes("google_error"), `got ${ret2.status} ${ret2.location}`);
+
+      // No secrets in the repo: the client secret appears only as an env
+      // reference, and no Google-issued secret formats are present.
+      const secretFiles = ["server/index.mjs", "server/db.mjs", "server/auth.mjs", "public/shared.js", "public/rider.js", "public/driver.js", "public/rider.html", "public/driver.html", "public/google-phone.html"];
+      let secretLeak = "";
+      for (const f of secretFiles) {
+        const src = fs.readFileSync(path.join(root, f), "utf8");
+        if (/GOCSPX-[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{10,}/.test(src)) secretLeak = f;
+      }
+      check("no Google-issued secret strings in the repo", secretLeak === "", `leak in ${secretLeak}`);
+      const idxSrc = fs.readFileSync(path.join(root, "server/index.mjs"), "utf8");
+      const secretRefs = idxSrc.split("\n").filter((l) => l.includes("GOOGLE_CLIENT_SECRET") && !l.trim().startsWith("//"));
+      check("GOOGLE_CLIENT_SECRET appears only as process.env reference", secretRefs.length > 0 && secretRefs.every((l) => l.includes("process.env.GOOGLE_CLIENT_SECRET")), JSON.stringify(secretRefs));
+    } finally {
+      if (gChild) { gChild.kill(); await sleep(300); }
+      try { fakeGoogle.close(); } catch {}
+      if (fs.existsSync(gDb)) fs.unlinkSync(gDb);
+      if (fs.existsSync(gDb + "-journal")) fs.unlinkSync(gDb + "-journal");
+    }
+  }
 
   // ---- Offer expiry (separate fresh-DB server, port 3458, TTL 3s) ----
   {

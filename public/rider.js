@@ -650,6 +650,7 @@ async function loadSettings() {
   try {
     const d = await api("/api/settings");
     settings = { ...settings, ...d.settings };
+    settings.google_login_enabled = !!d.google_login_enabled;
   } catch {}
   renderVehicles();
 }
@@ -658,6 +659,7 @@ async function boot() {
   initNotifications();
   applyI18n();
   await loadSettings();
+  initGoogleLogin("rider", settings.google_login_enabled);
   renderRiderTopupForm();
   riderTopupPicker = initTopupPicker($("rider-topup-method-box"), settings, updateRiderTopupButton);
   $("btn-rider-topup").addEventListener("click", (e) => riderTopup(e.currentTarget));
@@ -687,6 +689,7 @@ async function boot() {
     }
   } catch {}
   const q = new URLSearchParams(location.search);
+  if (q.get("google_error")) setErr($("auth-err"), q.get("google_error"));
   if (q.get("ride")) { currentRide = Number(q.get("ride")); showTrip(); }
 }
 boot();

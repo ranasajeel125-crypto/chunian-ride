@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=8">
+<link rel="stylesheet" href="/style.css?v=9">
 <link rel="stylesheet" href="/rider-driver-v23.css?v=1">
 <link rel="icon" type="image/png" href="/favicon.png?v=2">
 <link rel="manifest" href="/manifest.json">
@@ -80,6 +80,13 @@
       <div class="row">
         <button class="primary" id="btn-rider-signup" data-i18n="btn_signup">Sign up</button>
         <button id="btn-rider-login" data-i18n="btn_login">Login</button>
+      </div>
+      <div class="google-box">
+        <button class="google-btn" id="btn-google" type="button">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303C33.654,32.657,29.223,36,24,36c-6.627,0-12-5.373-12-12s5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24s8.955,20,20,20s20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/><path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/><path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.002,0.003-0.003l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/></svg>
+          <span data-i18n="google_continue">Continue with Google</span>
+        </button>
+        <p class="muted hidden" id="google-note"></p>
       </div>
       <p class="muted" id="rider-who"></p>
     </div>
@@ -253,8 +260,8 @@
 </nav>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/shared.js?v=9"></script>
-<script src="/rider.js?v=10"></script>
+<script src="/shared.js?v=10"></script>
+<script src="/rider.js?v=11"></script>
 <script>
   $("btn-rider-signup").addEventListener("click", (e) => riderSignup(e.currentTarget));
   $("btn-rider-login").addEventListener("click", (e) => riderLogin(e.currentTarget));

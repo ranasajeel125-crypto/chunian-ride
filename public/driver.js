@@ -734,7 +734,9 @@ async function boot() {
   try {
     const d = await api("/api/settings");
     settings = { ...settings, ...d.settings };
+    settings.google_login_enabled = !!d.google_login_enabled;
   } catch {}
+  initGoogleLogin("driver", settings.google_login_enabled);
   $("topup-amount").placeholder = t("topup_amount_ph", { min: settings.min_topup || 500 });
   topupPicker = initTopupPicker($("topup-method-box"), settings, updateTopupButton);
   $("withdraw-amount").placeholder = t("withdraw_amount_ph", { min: settings.min_withdrawal || 100 });
@@ -753,5 +755,9 @@ async function boot() {
       } catch { /* logged-in user without a driver profile: show login + registration */ }
     }
   } catch {}
+  // Google sign-in failures land back here with ?google_error= — show it
+  // in the login card (setErr uses textContent, so the URL value is safe).
+  const q = new URLSearchParams(location.search);
+  if (q.get("google_error")) setErr($("auth-err"), q.get("google_error"));
 }
 boot();

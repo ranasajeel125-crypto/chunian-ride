@@ -211,6 +211,14 @@ const STRINGS = {
     gps_pickup_failed: "GPS pickup failed — using {place} as pickup instead.",
     nav_external_gmaps: "Open in Google Maps",
     nav_external_osm: "Open in OpenStreetMap",
+    google_continue: "Continue with Google",
+    google_coming_soon: "Google login jald aa raha hai",
+    google_update_app: "Google login ke liye app ko v2.5 par update karein",
+    google_phone_title: "Apna phone number likhein",
+    google_phone_sub: "Pilot check ke liye phone number chahiye. Naya account hai to password khali chhor dein — purana account hai to uska password likhein, Google us se link ho jayega.",
+    google_continue_btn: "Continue",
+    google_account_label: "Google account",
+    back_to_login: "Back to login",
     settings_title: "Settings",
   },
   ur: {
@@ -417,6 +425,14 @@ const STRINGS = {
     gps_pickup_failed: "جی پی ایس پک اپ ناکام — {place} کو پک اپ بنایا گیا۔",
     nav_external_gmaps: "گوگل میپس میں کھولیں",
     nav_external_osm: "اوپن اسٹریٹ میپ میں کھولیں",
+    google_continue: "گوگل سے جاری رکھیں",
+    google_coming_soon: "گوگل لاگ ان جلد آ رہا ہے",
+    google_update_app: "گوگل لاگ ان کے لیے ایپ کو ورژن 2.5 پر اپ ڈیٹ کریں",
+    google_phone_title: "اپنا فون نمبر لکھیں",
+    google_phone_sub: "پائلٹ چیک کے لیے فون نمبر چاہیے۔ نیا اکاؤنٹ ہے تو پاس ورڈ خالی چھوڑ دیں — پرانا اکاؤنٹ ہے تو اس کا پاس ورڈ لکھیں، گوگل اس سے لنک ہو جائے گا۔",
+    google_continue_btn: "جاری رکھیں",
+    google_account_label: "گوگل اکاؤنٹ",
+    back_to_login: "لاگ ان پر واپس جائیں",
     settings_title: "سیٹنگز",
   },
 };
@@ -541,6 +557,51 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(translateError(data.error || ("HTTP " + res.status)));
   return data;
+}
+
+// ---------- Google sign-in (v2.5) ----------
+// Google blocks OAuth inside embedded WebViews, so in the installed app
+// the auth URL opens in the system browser (intent://) and comes back via
+// an App Link. The button is shown only when the server says Google is
+// configured; in the APK it also needs v2.5+ (MainActivity appends
+// "ChunianRide/2.5" to the user agent) — older APKs get the update note
+// instead of a dead end.
+function isApkWebView() { return /wv/.test(navigator.userAgent); }
+function apkVersion() {
+  const m = navigator.userAgent.match(/ChunianRide\/([\d.]+)/);
+  return m ? m[1] : null;
+}
+function googleLoginSupported() {
+  if (!isApkWebView()) return true;
+  const v = apkVersion();
+  if (!v) return false;
+  const parts = v.split(".").map((x) => Number(x) || 0);
+  return parts[0] > 2 || (parts[0] === 2 && (parts[1] || 0) >= 5);
+}
+function startGoogleLogin(role) {
+  const source = isApkWebView() ? "apk" : "web";
+  const url = `/api/auth/google?role=${role}&source=${source}`;
+  if (source === "apk") {
+    location.href = `intent://chunian-ride.onrender.com${url}#Intent;scheme=https;action=android.intent.action.VIEW;end`;
+  } else {
+    location.href = url;
+  }
+}
+function initGoogleLogin(role, enabled) {
+  const btn = $("btn-google");
+  const note = $("google-note");
+  if (!btn) return;
+  if (!enabled) {
+    btn.style.display = "none";
+    if (note) { note.classList.remove("hidden"); note.textContent = t("google_coming_soon"); }
+    return;
+  }
+  if (!googleLoginSupported()) {
+    btn.style.display = "none";
+    if (note) { note.classList.remove("hidden"); note.textContent = t("google_update_app"); }
+    return;
+  }
+  btn.addEventListener("click", () => startGoogleLogin(role));
 }
 // Every server error string (server/index.mjs + server/auth.mjs + server/db.mjs),
 // shown in the user's language. Keys must match the server strings exactly.

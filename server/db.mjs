@@ -382,11 +382,37 @@ const STATEMENTS = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_whitelist_phone_role ON pilot_whitelist(phone, role)`,
   `CREATE INDEX IF NOT EXISTS idx_whitelist_role_status ON pilot_whitelist(role, status)`,
+  // Google sign-in (v2.5, free OAuth 2.0). Short-lived rows only — every
+  // token/state is single-use and expires after 10 minutes; stale rows are
+  // pruned whenever a new one is created.
+  `CREATE TABLE IF NOT EXISTS google_auth_states (
+    state TEXT PRIMARY KEY,
+    role TEXT NOT NULL DEFAULT 'rider',
+    source TEXT NOT NULL DEFAULT 'web',
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS google_pending (
+    token TEXT PRIMARY KEY,
+    google_id TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'rider',
+    source TEXT NOT NULL DEFAULT 'web',
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS google_login_tokens (
+    token TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'rider',
+    created_at INTEGER NOT NULL
+  )`,
 ];
 
 // Additive column migrations — safe to re-run on every boot (idempotent).
 const COLUMN_MIGRATIONS = [
   ["users", "password_hash TEXT NOT NULL DEFAULT ''"],
+  ["users", "google_id TEXT NOT NULL DEFAULT ''"],
+  ["users", "google_email TEXT NOT NULL DEFAULT ''"],
   ["users", "phone_verified INTEGER NOT NULL DEFAULT 0"],
   ["users", "status TEXT NOT NULL DEFAULT 'active'"],
   ["users", "updated_at INTEGER"],

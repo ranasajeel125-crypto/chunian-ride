@@ -311,6 +311,27 @@ button.secondary {
   min-height: 48px;
 }
 button.danger { border-color: var(--red) !important; color: var(--red) !important; }
+/* ---------- Google sign-in button (v2.5) ---------- */
+/* White button with the Google "G", per Google's sign-in button guidance.
+   Hidden by JS when Google is not configured (or the APK is too old). */
+.google-box { margin-top: 12px; }
+.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 11px 14px;
+  background: #fff;
+  border: 1.5px solid #dadce0;
+  border-radius: var(--r-md);
+  color: #1f1f1f;
+  font-size: 16px;
+  font-weight: 600;
+}
+.google-btn svg { width: 20px; height: 20px; flex: none; }
+.google-btn:hover { background: #f8f9fa; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .row button { flex: 1; min-width: 0; }
 .row3 { display: flex; gap: 8px; }

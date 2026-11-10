@@ -105,6 +105,14 @@ app.use((req, res, next) => {
   }
   next();
 });
+// App Links verification file for the APK Google sign-in return trip
+// (v2.5). express.static ignores dotfiles by default, so this needs an
+// explicit route — Android fetches it when the app is installed to verify
+// that chunian-ride.onrender.com may open the app. Fingerprint = the APK
+// signing cert (same since v1).
+app.get("/.well-known/assetlinks.json", (req, res) => {
+  res.sendFile(path.join(root, "public", ".well-known", "assetlinks.json"));
+});
 app.use(express.static(path.join(root, "public")));
 app.use(attachAuth);
 
@@ -118,7 +126,7 @@ function num(v, d = 0) {
 
 function publicUser(u) {
   if (!u) return null;
-  const { password_hash, ...rest } = u;
+  const { password_hash, google_id, ...rest } = u;
   return rest;
 }
 
@@ -144,7 +152,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "2.4.1", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.5.0", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 // App update check (v2.1): single source of truth for the latest APK.
@@ -164,7 +172,9 @@ app.get("/api/places", async (req, res) => {
 
 app.get("/api/settings", async (req, res) => {
   const s = await getSettings();
-  res.json({ settings: s });
+  // google_login_enabled is a public boolean (client ID is public by
+  // design); the client SECRET never leaves the server.
+  res.json({ settings: s, google_login_enabled: googleConfigured() });
 });
 
 // ---- Fare estimate (public — needed before login) ----
@@ -332,6 +342,208 @@ app.post("/api/auth/change-password", requireAuth, async (req, res) => {
   const sessionId = await createSession("user", req.auth.ownerId, req.headers["user-agent"]);
   setSessionCookie(res, req, sessionId);
   res.json({ ok: true, message: "Password badal gaya — baqi devices se logout ho gaya" });
+});
+
+// ---- Google sign-in (v2.5, free OAuth 2.0) ----
+// Standard authorization-code flow. GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+// live ONLY in Render env vars — never in code, files or chat. The button
+// is shown only when both are set (google_login_enabled in /api/settings).
+// WebView gotcha: Google blocks OAuth inside embedded WebViews
+// (disallowed_useragent), and this app's APK is a WebView wrapper — so in
+// the APK the auth URL opens in the system browser (intent:// URL from the
+// page, routed by MainActivity), and the return trip comes back via an App
+// Link (/auth/google/return) that hands a one-time token to the WebView,
+// which exchanges it for the session cookie. In a normal browser the
+// callback sets the cookie directly.
+// Pilot gate: Google profiles have no phone, so a first-time Google user
+// must give a phone number (see /google-phone) and that number must be on
+// the pilot whitelist before any account is created — same rules as phone
+// signup. Drivers are owner-created: a Google driver login only links an
+// existing driver account (with that account's phone password).
+const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = process.env.GOOGLE_TOKEN_URL || "https://oauth2.googleapis.com/token";
+const GOOGLE_USERINFO_URL = process.env.GOOGLE_USERINFO_URL || "https://openidconnect.googleapis.com/v1/userinfo";
+const GOOGLE_TTL_MS = 10 * 60 * 1000; // states / pending identities / login tokens live 10 minutes
+const googleConfigured = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const googleRedirectUri = (req) => process.env.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
+const roleHome = (role) => (role === "driver" ? "/driver" : "/rider");
+const googleErrorRedirect = (role, message) => `${roleHome(role)}?google_error=${encodeURIComponent(message)}`;
+
+async function pruneGoogleRows() {
+  const cut = Date.now() - GOOGLE_TTL_MS;
+  for (const tbl of ["google_auth_states", "google_pending", "google_login_tokens"]) {
+    await client.execute({ sql: `DELETE FROM ${tbl} WHERE created_at < ?`, args: [cut] }).catch(() => {});
+  }
+}
+async function newGoogleLoginToken(sessionId, role) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await client.execute({ sql: "INSERT INTO google_login_tokens(token, session_id, role, created_at) VALUES (?, ?, ?, ?)", args: [token, sessionId, role, Date.now()] });
+  return token;
+}
+
+app.get("/api/auth/google", async (req, res) => {
+  if (!googleConfigured()) return res.status(503).json({ error: "Google login abhi setup nahi — owner se rabta karein" });
+  const role = req.query.role === "driver" ? "driver" : "rider";
+  const source = req.query.source === "apk" ? "apk" : "web";
+  const state = crypto.randomBytes(32).toString("hex");
+  await pruneGoogleRows();
+  await client.execute({ sql: "INSERT INTO google_auth_states(state, role, source, created_at) VALUES (?, ?, ?, ?)", args: [state, role, source, Date.now()] });
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: googleRedirectUri(req),
+    response_type: "code",
+    scope: "openid email profile",
+    state,
+    prompt: "select_account",
+  });
+  res.redirect(`${GOOGLE_AUTH_URL}?${params.toString()}`);
+});
+
+app.get("/api/auth/google/callback", async (req, res) => {
+  const { code, state } = req.query || {};
+  // The state is looked up FIRST (before any Google call) so a forged
+  // callback fails fast without spending a token exchange.
+  const st = state ? (await client.execute({ sql: "SELECT * FROM google_auth_states WHERE state = ?", args: [String(state)] })).rows[0] : null;
+  if (!st || Date.now() - Number(st.created_at) > GOOGLE_TTL_MS) {
+    return res.redirect(googleErrorRedirect("rider", "Google login ka waqt khatam — dobara koshish karein"));
+  }
+  await client.execute({ sql: "DELETE FROM google_auth_states WHERE state = ?", args: [st.state] });
+  const role = st.role === "driver" ? "driver" : "rider";
+  const source = st.source === "apk" ? "apk" : "web";
+  if (!code) return res.redirect(googleErrorRedirect(role, "Google se login nahi ho saka — dobara koshish karein"));
+  let profile = null;
+  try {
+    const tokRes = await fetch(GOOGLE_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: googleRedirectUri(req),
+        grant_type: "authorization_code",
+      }),
+    });
+    const tok = await tokRes.json().catch(() => ({}));
+    if (!tokRes.ok || !tok.access_token) throw new Error("token exchange failed");
+    const meRes = await fetch(GOOGLE_USERINFO_URL, { headers: { Authorization: `Bearer ${tok.access_token}` } });
+    const me = await meRes.json().catch(() => ({}));
+    if (!meRes.ok || !me.sub) throw new Error("userinfo failed");
+    profile = { googleId: String(me.sub), email: String(me.email || ""), name: String(me.name || "") };
+  } catch (e) {
+    return res.redirect(googleErrorRedirect(role, "Google se login nahi ho saka — dobara koshish karein"));
+  }
+  // Returning Google user: log straight in (no phone step).
+  const linked = (await client.execute({ sql: "SELECT * FROM users WHERE google_id = ?", args: [profile.googleId] })).rows[0];
+  if (linked) {
+    if (linked.status === "suspended") return res.redirect(googleErrorRedirect(role, "Ye account suspend hai — owner se rabta karein"));
+    const sessionId = await createSession("user", linked.id, req.headers["user-agent"]);
+    if (source === "apk") {
+      const token = await newGoogleLoginToken(sessionId, linked.role);
+      return res.redirect(`/auth/google/done?token=${token}`);
+    }
+    setSessionCookie(res, req, sessionId);
+    return res.redirect(roleHome(linked.role));
+  }
+  // First time: park the Google identity and ask for a phone number
+  // (the pilot whitelist is phone-based — checked at the phone step).
+  await pruneGoogleRows();
+  const token = crypto.randomBytes(32).toString("hex");
+  await client.execute({
+    sql: "INSERT INTO google_pending(token, google_id, email, name, role, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    args: [token, profile.googleId, profile.email, profile.name, role, source, Date.now()],
+  });
+  res.redirect(`/google-phone?token=${token}`);
+});
+
+app.get("/api/auth/google/pending", async (req, res) => {
+  const token = String(req.query.token || "");
+  if (!token) return res.status(400).json({ error: "token chahiye" });
+  const row = (await client.execute({ sql: "SELECT * FROM google_pending WHERE token = ?", args: [token] })).rows[0];
+  if (!row || Date.now() - Number(row.created_at) > GOOGLE_TTL_MS) return res.status(404).json({ error: "Ye Google login khatam ho gaya — dobara koshish karein" });
+  res.json({ name: row.name, email: row.email, role: row.role });
+});
+
+app.post("/api/auth/google/phone", async (req, res) => {
+  const { token, phone, password } = req.body || {};
+  if (!token || !phone) return res.status(400).json({ error: "token aur phone chahiye" });
+  const pend = (await client.execute({ sql: "SELECT * FROM google_pending WHERE token = ?", args: [String(token)] })).rows[0];
+  if (!pend || Date.now() - Number(pend.created_at) > GOOGLE_TTL_MS) {
+    return res.status(400).json({ error: "Ye Google login khatam ho gaya — dobara koshish karein" });
+  }
+  const cleanPhone = normalizePhone(phone);
+  const wantRole = pend.role === "driver" ? "driver" : "rider";
+  const finish = async (userId, role) => {
+    await client.execute({ sql: "DELETE FROM google_pending WHERE token = ?", args: [pend.token] });
+    const sessionId = await createSession("user", userId, req.headers["user-agent"]);
+    if (pend.source === "apk") {
+      const loginToken = await newGoogleLoginToken(sessionId, role);
+      return res.json({ ok: true, redirect: `/auth/google/done?token=${loginToken}` });
+    }
+    setSessionCookie(res, req, sessionId);
+    return res.json({ ok: true, redirect: roleHome(role) });
+  };
+  const existing = (await client.execute({ sql: "SELECT * FROM users WHERE phone = ?", args: [cleanPhone] })).rows[0];
+  if (existing) {
+    // Link Google to the existing phone account — only with that
+    // account's password, so a Google account alone can never hijack a
+    // phone number it does not own.
+    if (existing.role !== wantRole) return res.status(400).json({ error: `Is phone par ${wantRole} account nahi hai` });
+    if (existing.status === "suspended") return res.status(403).json({ error: "Ye account suspend hai — owner se rabta karein" });
+    if (existing.google_id && existing.google_id !== pend.google_id) {
+      return res.status(409).json({ error: "Is account se koi aur Google account link hai" });
+    }
+    if (existing.google_id === pend.google_id) return finish(existing.id, existing.role);
+    if (!existing.password_hash) return res.status(400).json({ error: "Is account ka password abhi set nahi — owner se rabta karein" });
+    if (!password || !(await verifyPassword(password, existing.password_hash))) {
+      return res.status(401).json({ error: "Is phone ke account ka password ghalat hai" });
+    }
+    await client.execute({ sql: "UPDATE users SET google_id = ?, google_email = ?, updated_at = ? WHERE id = ?", args: [pend.google_id, pend.email, Date.now(), existing.id] });
+    return finish(existing.id, existing.role);
+  }
+  // New account: drivers are owner-created, riders go through the pilot gate.
+  if (wantRole === "driver") return res.status(403).json({ error: "Driver account sirf owner banata hai — owner se rabta karein" });
+  let whitelistEntry = null;
+  if (String((await getSettings()).pilot_mode) === "1") {
+    const wl = await client.execute({ sql: "SELECT * FROM pilot_whitelist WHERE phone = ? AND role = ?", args: [cleanPhone, "rider"] });
+    whitelistEntry = wl.rows.find((r) => r.status === "pending" || r.status === "approved") || null;
+    if (!whitelistEntry) return res.status(403).json({ error: "Pilot registration sirf whitelist par hai — owner se rabta karein" });
+    if (whitelistEntry.status === "pending") {
+      const s = await getSettings();
+      const cap = pilotCap("rider", s);
+      const approvedCount = await client.execute({ sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status = 'approved'", args: ["rider"] });
+      if (Number(approvedCount.rows[0].n) >= cap) return res.status(403).json({ error: "Pilot limit poori ho gayi — registration band hai" });
+    }
+  }
+  const r = await client.execute({
+    sql: "INSERT INTO users(name, phone, role, password_hash, google_id, google_email, created_at) VALUES (?, ?, ?, '', ?, ?, ?)",
+    args: [String(pend.name || "Google User").trim() || "Google User", cleanPhone, "rider", pend.google_id, pend.email, Date.now()],
+  });
+  const userId = Number(r.lastInsertRowid);
+  await client.execute({ sql: "INSERT OR IGNORE INTO wallets(user_id, balance, updated_at) VALUES (?, 0, ?)", args: [userId, Date.now()] });
+  await client.execute({ sql: "INSERT OR IGNORE INTO passengers(user_id, created_at) VALUES (?, ?)", args: [userId, Date.now()] });
+  if (whitelistEntry) await client.execute({ sql: "UPDATE pilot_whitelist SET status='approved' WHERE id = ?", args: [whitelistEntry.id] });
+  return finish(userId, "rider");
+});
+
+// APK return trip: the system browser hands a one-time token back to the
+// app via an App Link. The token names the session the callback already
+// created, so this page only sets the cookie inside the WebView.
+app.get("/auth/google/done", async (req, res) => {
+  const token = String(req.query.token || "");
+  const ret = `/auth/google/return?token=${encodeURIComponent(token)}`;
+  res.type("html").send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Chunian Ride — Google login</title><style>body{font-family:system-ui,sans-serif;background:#0D1748;color:#fff;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center;padding:24px}main{max-width:420px}h1{font-size:22px}a{display:inline-block;margin-top:18px;background:#fff;color:#0D1748;font-weight:700;text-decoration:none;padding:14px 22px;border-radius:12px}p{opacity:.85;line-height:1.5}</style></head><body><main><h1>Google login ho gaya ✓</h1><p>Ab Chunian Ride app mein wapas jayein — aap login ho chuke hain.</p><a href="${ret}">Chunian Ride app mein kholein</a><p>App khud nahi khul rahi? App ko v2.5 par update karein, phir dobara koshish karein.</p></main><script>setTimeout(function(){location.href=${JSON.stringify(ret)};},900);</script></body></html>`);
+});
+
+app.get("/auth/google/return", async (req, res) => {
+  const token = String(req.query.token || "");
+  const row = token ? (await client.execute({ sql: "SELECT * FROM google_login_tokens WHERE token = ?", args: [token] })).rows[0] : null;
+  if (!row || Date.now() - Number(row.created_at) > GOOGLE_TTL_MS) {
+    return res.redirect(googleErrorRedirect("rider", "Google login ka waqt khatam — dobara koshish karein"));
+  }
+  await client.execute({ sql: "DELETE FROM google_login_tokens WHERE token = ?", args: [token] });
+  setSessionCookie(res, req, row.session_id);
+  res.redirect(roleHome(row.role === "driver" ? "driver" : "rider"));
 });
 
 // ---- Admin bootstrap + login ----

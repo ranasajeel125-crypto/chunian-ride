@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.chunianride.app",
+      "sha256_cert_fingerprints": ["19a11c27e7cc613271faec139ba9290140e576c5f95b50f24d3996eb9aab3e6a"]
+    }
+  }
+]
