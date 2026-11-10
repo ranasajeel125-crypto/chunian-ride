@@ -3,6 +3,10 @@
 // 5s live-tracking poll (freshness rule unchanged), 3s chat polling with
 // unread badge, WebRTC calls, complaint form, JazzCash/Sadapay picker,
 // support contact (phone + WhatsApp), push toggle, client-error reporting.
+// v2.4: GPS starts ONLY on a real tap ("Use my location" / "Current
+// location (GPS)" choice) — the old silent load-time call burned the
+// one-shot permission prompt and poisoned later taps, so the popup never
+// appeared. Denial now shows a settings hint + Retry button.
 const store = { rider: null };
 let places = [];
 let settings = { rate_bike_per_km: 15, rate_rickshaw_per_km: 25, rate_car_per_km: 70, rate_ac_car_per_km: 85, min_bike: 50, min_rickshaw: 100, min_car: 150, min_ac_car: 200, jazzcash_number: "03266040350", sadapay_number: "", support_phone: "", support_whatsapp: "" };
@@ -92,17 +96,29 @@ async function initMap() {
     }
     onRouteChange();
   });
-  // GPS pickup by default; fall back to Chunian City if GPS is unavailable.
-  requestGpsPickup(true);
+  // v2.4: do NOT auto-request GPS on load. The old silent load-time call
+  // fired the platform permission prompt before the rider tapped anything,
+  // and a denial there made the browser remember "denied" — later taps
+  // then failed instantly with no popup at all. GPS starts only on a real
+  // tap ("Use my location" button or the "Current location (GPS)"
+  // dropdown choice). Pickup defaults to Chunian City until then.
+  sel1.value = "Chunian City";
   onRouteChange();
 }
-function requestGpsPickup(silent) {
+// v2.4: GPS starts ONLY from a real user tap ("Use my location" button
+// or the "Current location (GPS)" dropdown choice) — never automatically
+// on page load, and never pre-skipped on a permission-state check. A tap
+// calls getCurrentPosition directly, which is what makes the platform
+// show its permission dialog. Only a genuine failure/denial falls back
+// to Chunian City — and a denial says plainly what to do, with a Retry
+// button that re-invokes the prompt once the rider has allowed location.
+function requestGpsPickup() {
   if (!("geolocation" in navigator)) {
-    if (!silent) toast(t("gps_unavailable"), "error");
+    toast(t("gps_unavailable"), "error");
     fallbackPickup();
     return;
   }
-  if (!silent) setErr($("gps-err"), t("gps_waiting"));
+  setErr($("gps-err"), t("gps_waiting"));
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       gpsPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -112,16 +128,34 @@ function requestGpsPickup(silent) {
         gpsMarker = L.circleMarker([gpsPos.lat, gpsPos.lng], { radius: 8, color: "#0b5ed7", weight: 2, fillColor: "#2f7fe0", fillOpacity: 0.9 }).addTo(map).bindPopup(t("current_location"));
       }
       setErr($("gps-err"), "");
-      if (!silent) toast(t("gps_ok"), "ok");
+      toast(t("gps_ok"), "ok");
       computeGpsDistance();
       onRouteChange();
     },
     (err) => {
-      if (!silent) { setErr($("gps-err"), t(err.code === 1 ? "gps_denied" : "gps_unavailable")); toast(t(err.code === 1 ? "gps_denied" : "gps_unavailable"), "error"); }
-      fallbackPickup();
+      if (err.code === 1) {
+        // Permission denied: fall back to Chunian City, but do not hide
+        // the denial behind the generic fallback text. Show what happened,
+        // where to allow location, and a Retry button — after the rider
+        // allows it in settings, Retry works; while the origin is still
+        // denied the platform will not re-prompt, and the hint says so.
+        fallbackPickup();
+        showGpsDenied();
+        toast(t("gps_denied"), "error");
+      } else {
+        toast(t("gps_unavailable"), "error");
+        fallbackPickup();
+      }
     },
     { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
   );
+}
+function showGpsDenied() {
+  const el = $("gps-err");
+  if (!el) return;
+  el.innerHTML = `<b>${escapeHtml(t("gps_denied"))}</b><br><span class="muted">${escapeHtml(t("gps_settings_hint"))}</span> <button type="button" class="secondary" id="gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
+  const retry = $("gps-retry");
+  if (retry) retry.addEventListener("click", () => requestGpsPickup());
 }
 function fallbackPickup() {
   // v2.3: GPS failed — fall back to the place pickup and say so plainly.
@@ -630,7 +664,15 @@ async function boot() {
   // works, and session restore below must still run.
   try { await initMap(); } catch (e) { console.warn("[rider] map unavailable, continuing without it:", e && e.message ? e.message : e); }
   $("destination").addEventListener("change", onRouteChange);
-  $("pickup").addEventListener("change", () => { if ($("pickup").value !== "__gps__") { gpsPos = null; gpsDistanceKm = null; const p = placeByName($("pickup").value); if (p) setPin("pickup", p); } onRouteChange(); });
+  $("pickup").addEventListener("change", () => {
+    // Picking "Current location (GPS)" is a real tap — start GPS now so
+    // the platform shows its permission prompt.
+    if ($("pickup").value === "__gps__") { requestGpsPickup(); return; }
+    gpsPos = null; gpsDistanceKm = null;
+    const p = placeByName($("pickup").value);
+    if (p) setPin("pickup", p);
+    onRouteChange();
+  });
   // Session restore: rider stays, driver is redirected, guest sees the login card.
   try {
     const d = await api("/api/auth/me");

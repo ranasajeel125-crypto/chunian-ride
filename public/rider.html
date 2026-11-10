@@ -254,11 +254,11 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/shared.js?v=9"></script>
-<script src="/rider.js?v=9"></script>
+<script src="/rider.js?v=10"></script>
 <script>
   $("btn-rider-signup").addEventListener("click", (e) => riderSignup(e.currentTarget));
   $("btn-rider-login").addEventListener("click", (e) => riderLogin(e.currentTarget));
-  $("btn-gps").addEventListener("click", () => requestGpsPickup(false));
+  $("btn-gps").addEventListener("click", () => requestGpsPickup());
   $("btn-find-driver").addEventListener("click", (e) => requestRide(e.currentTarget));
   $("btn-share").addEventListener("click", (e) => shareTrip(e.currentTarget));
   $("btn-sos").addEventListener("click", (e) => sosTrip(e.currentTarget));
