@@ -14,6 +14,7 @@ let vehicle = "bike";
 let currentRide = null;
 let fareEstimate = null;
 let map, markers = {}, pickupMarker = null, destMarker = null, driverMarker = null, gpsMarker = null;
+let tripMap = null, tripMapRideId = null, tripWatchId = null;
 let gpsPos = null;          // {lat, lng} from the rider's phone GPS
 let gpsDistanceKm = null;   // haversine km from GPS pickup to the destination place
 let chatTimer = null;
@@ -367,7 +368,19 @@ async function showTrip(silent) {
         locLine = `<p class="loc-line warn">${t("driver_loc_missing")}</p>`;
       }
     } else clearDriverMarker();
-    const destCoords = placeByName(r.destination);
+    // v2.7: in-app trip map — pickup + destination pins, OSRM route, live
+    // driver marker from this 5s poll. No external Maps link anywhere.
+    if (r.status === "accepted" || r.status === "ongoing") {
+      ensureTripMap(r);
+      if (tripMap) {
+        const loc = d.driver_location;
+        const fresh = loc && loc.lat != null && loc.lng != null && loc.updated_at && Date.now() - loc.updated_at < 180000;
+        if (fresh) tripMap.setDriver(loc.lat, loc.lng);
+      }
+    } else {
+      stopTripLiveGps();
+      destroyTripMap();
+    }
     $("trip-info").innerHTML = `
       <p><b>Ride #${r.id}</b> — ${escapeHtml(r.pickup)} → ${escapeHtml(r.destination)} (${r.distance_km} km, ${vehLabel(r.vehicle_type)})</p>
       ${schedLine(r.scheduled_for)}
@@ -375,7 +388,6 @@ async function showTrip(silent) {
       ${drv ? `<p>${escapeHtml(drv.driver_name)} ${ratingText(drv.driver_rating, drv.driver_rating_count, "driver")} — ${escapeHtml(drv.vehicle_model)}, ${escapeHtml(drv.plate)}, ${t("eta_min", { min: drv.eta_min })}</p>` : ""}
       <p>${t("trip_cash")} ${r.cash_confirmed ? t("cash_confirmed") : ""}</p>
       ${locLine}
-      ${destCoords ? `<p class="v23-nav-links"><a target="_blank" rel="noopener" href="${gmapsDirUrl(destCoords.lat, destCoords.lng)}">${escapeHtml(t("nav_external_gmaps"))}</a> · <a target="_blank" rel="noopener" href="${osmDirUrl(destCoords.lat, destCoords.lng)}">${escapeHtml(t("nav_external_osm"))}</a></p>` : ""}
       ${r.status === "completed" ? `<p>${t("trip_done")}</p>` : ""}`;
     if (drv) {
       $("chat-box").classList.remove("hidden");
@@ -406,6 +418,72 @@ function updateDriverMarker(lat, lng) {
 }
 function clearDriverMarker() {
   if (driverMarker && map) { map.removeLayer(driverMarker); driverMarker = null; }
+}
+
+// ---------- In-app trip map (v2.7) ----------
+// Pickup = the ride's real GPS point when the rider booked from GPS,
+// else the place pin; destination = the place pin. The route is drawn
+// ONCE per ride (pickup -> destination, static) — the 5s poll only moves
+// the driver marker, so OSRM is never hammered.
+function tripPickupCoords(r) {
+  if (r.pickup_lat != null && r.pickup_lng != null) return { lat: Number(r.pickup_lat), lng: Number(r.pickup_lng), label: r.pickup };
+  const p = placeByName(r.pickup);
+  return p ? { lat: p.lat, lng: p.lng, label: r.pickup } : null;
+}
+function tripDestCoords(r) {
+  const p = placeByName(r.destination);
+  return p ? { lat: p.lat, lng: p.lng, label: r.destination } : null;
+}
+function ensureTripMap(r) {
+  if (tripMap && tripMapRideId === r.id) { tripMap.invalidateSize(); return; }
+  destroyTripMap();
+  const pickup = tripPickupCoords(r), dest = tripDestCoords(r);
+  tripMap = createRideMap("trip-map", { pickup, destination: dest });
+  if (!tripMap) return;
+  tripMapRideId = r.id;
+  setTimeout(() => { if (tripMap) tripMap.invalidateSize(); }, 80);
+  if (pickup && dest) tripMap.drawRoute(pickup, dest, $("trip-route-info"));
+}
+function destroyTripMap() {
+  if (tripMap) { try { tripMap.destroy(); } catch {} tripMap = null; }
+  tripMapRideId = null;
+}
+// v2.7: the rider's own live marker starts ONLY on a real tap of the
+// "Show my live location" button (v2.4 rule — never silent on load).
+// Denial shows the settings hint + Retry inline, single toast rule kept:
+// no toast here, the inline message is the notice (same as showGpsDenied).
+function startTripLiveGps() {
+  if (!currentRide) { toast(t("no_active_ride"), "error"); return; }
+  if (tripWatchId !== null) return;
+  if (!("geolocation" in navigator)) { toast(t("gps_unavailable"), "error"); return; }
+  setErr($("trip-gps-err"), t("gps_waiting"));
+  tripWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      setErr($("trip-gps-err"), "");
+      const btn = $("btn-trip-live");
+      if (btn) btn.textContent = t("map_live_on");
+      if (tripMap) tripMap.setRider(pos.coords.latitude, pos.coords.longitude, t("map_you"));
+    },
+    (err) => {
+      stopTripLiveGps();
+      if (err.code === 1) {
+        const el = $("trip-gps-err");
+        if (el) {
+          el.innerHTML = `<b>${escapeHtml(t("gps_denied"))}</b><br><span class="muted">${escapeHtml(t("gps_settings_hint"))}</span> <button type="button" class="secondary" id="trip-gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
+          const retry = $("trip-gps-retry");
+          if (retry) retry.addEventListener("click", () => startTripLiveGps());
+        }
+      } else {
+        toast(t("gps_unavailable"), "error");
+      }
+    },
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+  );
+}
+function stopTripLiveGps() {
+  if (tripWatchId !== null) { try { navigator.geolocation.clearWatch(tripWatchId); } catch {} tripWatchId = null; }
+  const btn = $("btn-trip-live");
+  if (btn) btn.textContent = t("map_show_live");
 }
 
 // ---------- In-ride chat (v2.3: 3s poll, ?after=&limit=50, unread badge) ----------

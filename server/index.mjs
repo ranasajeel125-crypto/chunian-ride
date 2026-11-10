@@ -152,7 +152,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "2.6.0", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.7.0", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 // App update check (v2.1): single source of truth for the latest APK.
@@ -772,6 +772,10 @@ app.post("/api/drivers/:id/online", requireAuth, requireSelfOrAdmin((req) => req
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
   if (d.rows[0].status !== "approved") return res.status(403).json({ error: "driver is not approved yet" });
+  // v2.7: a 0,0 fix is not a real location — never store it as the driver.
+  if (lat != null && lng != null && Number(lat) === 0 && Number(lng) === 0) {
+    return res.status(400).json({ error: "0,0 is not a real location" });
+  }
   // Pilot gate (v2.2): an approved driver whose documents are not all
   // verified cannot go online — approve is gated the same way, so this
   // also catches drivers approved before the gate existed.
@@ -789,11 +793,23 @@ app.post("/api/drivers/:id/online", requireAuth, requireSelfOrAdmin((req) => req
 });
 
 // Driver live location — the driver app posts phone GPS while online.
+// v2.7 sanity checks: 0,0 is never a real fix (some phones report it when
+// GPS has no fix yet), and an accuracy value — if the client sends one —
+// must be a sane number. A rejected fix never overwrites the last good one.
 app.post("/api/drivers/:id/location", requireAuth, requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
-  const { lat, lng } = req.body || {};
+  const { lat, lng, accuracy } = req.body || {};
   const la = Number(lat), ln = Number(lng);
   if (!Number.isFinite(la) || !Number.isFinite(ln) || la < -90 || la > 90 || ln < -180 || ln > 180) {
     return res.status(400).json({ error: "valid lat/lng required" });
+  }
+  if (la === 0 && ln === 0) {
+    return res.status(400).json({ error: "0,0 is not a real location" });
+  }
+  if (accuracy != null) {
+    const acc = Number(accuracy);
+    if (!Number.isFinite(acc) || acc < 0 || acc > 100000) {
+      return res.status(400).json({ error: "valid accuracy required" });
+    }
   }
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });

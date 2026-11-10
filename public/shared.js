@@ -193,6 +193,13 @@ const STRINGS = {
     nav_route_direct: "Direct route (estimated — not road distance)",
     nav_route_road: "Road route",
     nav_osrm_failed: "Road route unavailable — showing a direct line instead.",
+    map_driver: "Driver",
+    map_you: "You",
+    map_rider: "Rider",
+    map_pickup: "Pickup",
+    map_dest: "Destination",
+    map_show_live: "📍 Show my live location",
+    map_live_on: "Live location on",
     complaint_title: "Report a problem with this ride",
     complaint_ph: "Describe the problem…",
     complaint_btn: "Send complaint",
@@ -216,8 +223,6 @@ const STRINGS = {
     agreed_fare_label: "Agreed fare",
     chat_unread: "{n} new",
     gps_pickup_failed: "GPS pickup failed — using {place} as pickup instead.",
-    nav_external_gmaps: "Open in Google Maps",
-    nav_external_osm: "Open in OpenStreetMap",
     google_continue: "Continue with Google",
     google_coming_soon: "Google login jald aa raha hai",
     google_update_app: "Google login ke liye app ko v2.5 par update karein",
@@ -414,6 +419,13 @@ const STRINGS = {
     nav_route_direct: "سیدھا راستہ (اندازاً — سڑک کا فاصلہ نہیں)",
     nav_route_road: "سڑک کا راستہ",
     nav_osrm_failed: "سڑک کا راستہ نہیں ملا — سیدھی لکیر دکھائی جا رہی ہے۔",
+    map_driver: "ڈرائیور",
+    map_you: "آپ",
+    map_rider: "مسافر",
+    map_pickup: "پک اپ",
+    map_dest: "منزل",
+    map_show_live: "📍 میری لائیو لوکیشن دکھائیں",
+    map_live_on: "لائیو لوکیشن آن ہے",
     complaint_title: "اس رائیڈ کی شکایت کریں",
     complaint_ph: "مسئلہ بتائیں…",
     complaint_btn: "شکایت بھیجیں",
@@ -437,8 +449,6 @@ const STRINGS = {
     agreed_fare_label: "طے شدہ کرایہ",
     chat_unread: "{n} نئے",
     gps_pickup_failed: "جی پی ایس پک اپ ناکام — {place} کو پک اپ بنایا گیا۔",
-    nav_external_gmaps: "گوگل میپس میں کھولیں",
-    nav_external_osm: "اوپن اسٹریٹ میپ میں کھولیں",
     google_continue: "گوگل سے جاری رکھیں",
     google_coming_soon: "گوگل لاگ ان جلد آ رہا ہے",
     google_update_app: "گوگل لاگ ان کے لیے ایپ کو ورژن 2.5 پر اپ ڈیٹ کریں",
@@ -1094,11 +1104,68 @@ async function fetchOsrmRoute(from, to) {
     };
   } catch { return null; }
 }
-function gmapsDirUrl(lat, lng) {
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(lat + "," + lng)}`;
-}
-function osmDirUrl(lat, lng) {
-  return `https://www.openstreetmap.org/directions?to=${encodeURIComponent(lat + "," + lng)}`;
+// ---------- In-app ride map (v2.7, Leaflet + OSM + OSRM, free) ----------
+// One shared component for the rider trip screen and the driver active-
+// ride screen. Everything renders INSIDE the app — there is no external
+// Maps intent anywhere on a ride screen.
+// createRideMap(elId, { pickup, destination }) -> controller or null
+// (null when Leaflet failed to load or the element is missing — callers
+// keep working without a map). pickup/destination: {lat, lng, label}.
+// setDriver/setRider move the live markers; drawRoute draws the OSRM road
+// route, or a dashed direct line labelled as estimated on failure.
+function createRideMap(elId, opts) {
+  if (typeof L === "undefined") return null;
+  const el = $(elId);
+  if (!el) return null;
+  const o = opts || {};
+  let map = null;
+  try { map = initBaseMap(elId); } catch { return null; }
+  const layer = L.layerGroup().addTo(map);
+  let driverMarker = null, riderMarker = null, routeLine = null;
+  const points = [];
+  function addPin(c, label) {
+    if (!c || c.lat == null || c.lng == null) return;
+    L.marker([c.lat, c.lng]).addTo(layer).bindPopup(`<b>${escapeHtml(label)}</b>`);
+    points.push([c.lat, c.lng]);
+  }
+  addPin(o.pickup, (o.pickup && o.pickup.label) || t("map_pickup"));
+  addPin(o.destination, (o.destination && o.destination.label) || t("map_dest"));
+  function setDriver(lat, lng) {
+    if (lat == null || lng == null) return;
+    if (driverMarker) driverMarker.setLatLng([lat, lng]);
+    else driverMarker = L.circleMarker([lat, lng], { radius: 9, color: "#0b5ed7", weight: 2, fillColor: "#2f7fe0", fillOpacity: 0.9 }).addTo(map).bindPopup(t("map_driver"));
+  }
+  function setRider(lat, lng, label) {
+    if (lat == null || lng == null) return;
+    if (riderMarker) riderMarker.setLatLng([lat, lng]);
+    else riderMarker = L.circleMarker([lat, lng], { radius: 9, color: "#1a7f37", weight: 2, fillColor: "#2da44e", fillOpacity: 0.9 }).addTo(map).bindPopup(label || t("map_rider"));
+  }
+  async function drawRoute(from, to, infoEl) {
+    if (!from || !to) return;
+    if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+    const route = await fetchOsrmRoute(from, to);
+    if (route) {
+      routeLine = L.polyline(route.coords, { color: "#0b5ed7", weight: 4 }).addTo(map);
+      if (infoEl) infoEl.textContent = `${t("nav_route_road")}: ${route.distanceKm} km • ~${route.durationMin} min`;
+    } else {
+      routeLine = L.polyline([[from.lat, from.lng], [to.lat, to.lng]], { color: "#888", weight: 3, dashArray: "6 6" }).addTo(map);
+      if (infoEl) infoEl.textContent = `${t("nav_route_direct")} — ${t("nav_osrm_failed")}`;
+    }
+    fitAll();
+  }
+  function fitAll() {
+    const pts = points.slice();
+    if (driverMarker) pts.push([driverMarker.getLatLng().lat, driverMarker.getLatLng().lng]);
+    if (riderMarker) pts.push([riderMarker.getLatLng().lat, riderMarker.getLatLng().lng]);
+    if (pts.length > 1) { try { map.fitBounds(pts, { padding: [30, 30] }); } catch {} }
+    else if (pts.length === 1) { try { map.setView(pts[0], 14); } catch {} }
+  }
+  fitAll();
+  return {
+    setDriver, setRider, drawRoute, fitAll,
+    invalidateSize: () => { try { map.invalidateSize(); } catch {} },
+    destroy: () => { try { map.remove(); } catch {} },
+  };
 }
 
 // ---------- In-app voice call (v2.3, WebRTC P2P — STUN only, NO TURN) ----------

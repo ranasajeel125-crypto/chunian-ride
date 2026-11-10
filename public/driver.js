@@ -6,6 +6,7 @@
 const store = { driver: null };
 let settings = { rate_bike_per_km: 15, rate_rickshaw_per_km: 25, rate_car_per_km: 70, rate_ac_car_per_km: 85, min_bike: 50, min_rickshaw: 100, min_car: 150, min_ac_car: 200, jazzcash_number: "03266040350", sadapay_number: "", min_topup: 500, min_withdrawal: 100, support_phone: "", support_whatsapp: "" };
 let driverActiveRide = null;
+let driverTripMap = null, driverTripMapRideId = null;
 let chatTimer = null;
 let locWatchId = null, lastLocPost = 0;
 let currentScreen = "home";
@@ -181,9 +182,13 @@ function initDriverMap() {
   } catch { driverMap = null; }
 }
 function updateDriverMapPosition() {
-  if (!driverMap || !lastGps || typeof L === "undefined") return;
-  if (driverPosMarker) driverPosMarker.setLatLng([lastGps.lat, lastGps.lng]);
-  else driverPosMarker = L.circleMarker([lastGps.lat, lastGps.lng], { radius: 8, color: "#0b5ed7", weight: 2, fillColor: "#2f7fe0", fillOpacity: 0.9 }).addTo(driverMap).bindPopup(t("current_location"));
+  if (!lastGps) return;
+  if (driverMap && typeof L !== "undefined") {
+    if (driverPosMarker) driverPosMarker.setLatLng([lastGps.lat, lastGps.lng]);
+    else driverPosMarker = L.circleMarker([lastGps.lat, lastGps.lng], { radius: 8, color: "#0b5ed7", weight: 2, fillColor: "#2f7fe0", fillOpacity: 0.9 }).addTo(driverMap).bindPopup(t("current_location"));
+  }
+  // v2.7: the active-ride map moves with the same GPS fix.
+  if (driverTripMap) driverTripMap.setDriver(lastGps.lat, lastGps.lng);
 }
 function drawRequestPins(requests) {
   if (!driverMap || !reqPinLayer || typeof L === "undefined") return;
@@ -227,8 +232,6 @@ async function navigateTo(rideId, target) {
     initDriverMap();
     if (driverMap) driverMap.invalidateSize();
     if (from) await drawDriverRoute(from, dest, $("driver-route-info"));
-    const links = $("driver-nav-links");
-    if (links) links.innerHTML = `<a target="_blank" rel="noopener" href="${gmapsDirUrl(dest.lat, dest.lng)}">${escapeHtml(t("nav_external_gmaps"))}</a> · <a target="_blank" rel="noopener" href="${osmDirUrl(dest.lat, dest.lng)}">${escapeHtml(t("nav_external_osm"))}</a>`;
   }, 120);
 }
 
@@ -336,7 +339,6 @@ function requestCardHtml(r, hero) {
     <p class="v23-nav-links">
       <button type="button" data-nav-pickup="${r.id}">${escapeHtml(t("nav_pickup"))}</button>
       <button type="button" data-nav-dest="${r.id}">${escapeHtml(t("nav_dest"))}</button>
-      ${(() => { const pc = ridePickupCoords(r), dc = rideDestCoords(r); return (pc ? ` <a target="_blank" rel="noopener" href="${gmapsDirUrl(pc.lat, pc.lng)}">🗺️ Google Maps</a>` : "") + (dc ? ` <a target="_blank" rel="noopener" href="${osmDirUrl(dc.lat, dc.lng)}">OSM</a>` : ""); })()}
     </p>
   </div>`;
 }
@@ -410,9 +412,36 @@ let chatLastId = 0;
 let callCtl = null;
 let callRideId = null;
 
+// ---------- In-app active-ride map (v2.7) ----------
+// Pickup + destination pins, OSRM route (drawn once per ride), live driver
+// marker from the same watchPosition fix that posts to the server, and the
+// rider pin at the pickup point while heading there (destination once the
+// trip has started — the rider app does not stream live GPS to the driver).
+function ensureDriverTripMap(ride) {
+  if (driverTripMap && driverTripMapRideId === ride.id) { driverTripMap.invalidateSize(); return; }
+  destroyDriverTripMap();
+  const pickup = ridePickupCoords(ride), dest = rideDestCoords(ride);
+  driverTripMap = createRideMap("driver-trip-map", {
+    pickup: pickup ? { lat: pickup.lat, lng: pickup.lng, label: ride.pickup } : null,
+    destination: dest ? { lat: dest.lat, lng: dest.lng, label: ride.destination } : null,
+  });
+  if (!driverTripMap) return;
+  driverTripMapRideId = ride.id;
+  setTimeout(() => { if (driverTripMap) driverTripMap.invalidateSize(); }, 80);
+  if (pickup && dest) driverTripMap.drawRoute(pickup, dest, $("driver-trip-route-info"));
+  if (lastGps) driverTripMap.setDriver(lastGps.lat, lastGps.lng);
+  const riderAt = ride.status === "ongoing" ? dest : pickup;
+  if (riderAt) driverTripMap.setRider(riderAt.lat, riderAt.lng, t("map_rider"));
+}
+function destroyDriverTripMap() {
+  if (driverTripMap) { try { driverTripMap.destroy(); } catch {} driverTripMap = null; }
+  driverTripMapRideId = null;
+}
+
 async function loadDriverRides() {
   if (!store.driver) return;
   try {
+    await loadPlaces();
     const d = await api(`/api/rides?driver_id=${store.driver.id}`);
     const active = d.rides.find((r) => r.status === "accepted" || r.status === "ongoing");
     const prevActive = driverActiveRide ? driverActiveRide.id : null;
@@ -420,12 +449,14 @@ async function loadDriverRides() {
     const card = $("driver-chat-card");
     if (active) {
       card.classList.remove("hidden");
+      ensureDriverTripMap(active);
       $("driver-chat-who").textContent = `Ride #${active.id} — ${active.pickup} → ${active.destination} • ${active.rider_name || ""} • ${t("agreed_fare_label")}: ${fmtRs(active.agreed_fare || active.suggested_fare)}`;
       if (prevActive !== active.id) { chatLastId = 0; $("driver-chat-list").innerHTML = ""; }
       loadDriverChat();
       ensureChatTimer();
       ensureCallForRide(active);
     } else {
+      destroyDriverTripMap();
       card.classList.add("hidden");
       if (callCtl) { callCtl.reset(); callCtl = null; callRideId = null; updateCallUI("idle"); }
     }

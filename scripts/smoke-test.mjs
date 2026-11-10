@@ -332,6 +332,16 @@ async function main() {
   await expectFail("chat is private to the ride's rider/driver -> 403 for another rider", () => call(`/api/rides/${ride.ride_id}/messages`, { session: "riderB" }), 403);
 
   // Live location: driver posts GPS, ride detail carries it.
+  // v2.7 hardening: auth required, own-location only, bad coords rejected
+  // (0,0 is never a real fix; a rejected fix must not overwrite the last
+  // good one — the rider poll below still sees 30.97/74.03 afterwards).
+  await expectFail("location unauthenticated -> 401", () => call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 74.03 }) }), 401);
+  await expectFail("another user cannot post this driver's location -> 403", () => call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 74.03 }), session: "riderB" }), 403);
+  await expectFail("location 0,0 rejected -> 400", () => call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 0, lng: 0 }), session: "driver" }), 400);
+  await expectFail("location lat 91 rejected -> 400", () => call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 91, lng: 74.03 }), session: "driver" }), 400);
+  await expectFail("location lng 200 rejected -> 400", () => call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 200 }), session: "driver" }), 400);
+  await expectFail("location non-numeric lat rejected -> 400", () => call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: "abc", lng: 74.03 }), session: "driver" }), 400);
+  await expectFail("location negative accuracy rejected -> 400", () => call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 74.03, accuracy: -5 }), session: "driver" }), 400);
   const loc = await call(`/api/drivers/${driverId}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 74.03 }), session: "driver" });
   check("driver location posted", loc.ok === true);
   const detail2 = await call(`/api/rides/${ride.ride_id}`, { session: "rider" });
@@ -592,7 +602,7 @@ async function main() {
 
   // ================= v2.2 =================
   const health21 = await call("/api/health");
-  check("version is 2.6.0", health21.version === "2.6.0", `got ${health21.version}`);
+  check("version is 2.7.0", health21.version === "2.7.0", `got ${health21.version}`);
 
   // ---- PWA ----
   const manifestRes = await fetch(BASE + "/manifest.json");
@@ -604,12 +614,19 @@ async function main() {
   check("icon 512 serves 200", (await fetch(BASE + "/icons/icon-512.png")).status === 200);
   const swRes = await fetch(BASE + "/sw.js");
   const swText = await swRes.text();
-  check("sw.js serves 200 with versioned cache chunian-ride-v2.6.0", swRes.status === 200 && swText.includes("chunian-ride-v2.6.0"));
+  check("sw.js serves 200 with versioned cache chunian-ride-v2.7.0", swRes.status === 200 && swText.includes("chunian-ride-v2.7.0"));
   const landing21 = await (await fetch(BASE + "/")).text();
-  check("landing footer says v2.6 + links manifest", landing21.includes("Chunian Ride v2.6") && landing21.includes("/manifest.json"));
+  check("landing footer says v2.7 + links manifest", landing21.includes("Chunian Ride v2.7") && landing21.includes("/manifest.json"));
 
   const riderPage21 = await (await fetch(BASE + "/rider")).text();
   check("rider page has promo input + notification bell + rider top-up card", riderPage21.includes("promo-code") && riderPage21.includes("notif-bell") && riderPage21.includes("rider-topup-amount"));
+  // ---- v2.7: web-only release — app-version 2.7/code 10, APK stays v2.6 ----
+  const appVer = await call("/api/app-version");
+  check("app-version is 2.7 / code 10, apkUrl still the v2.6 APK (web-only release)", appVer.version === "2.7" && appVer.versionCode === 10 && appVer.apkUrl === "/downloads/ChunianRide-v2.6.apk", JSON.stringify(appVer));
+  // ---- v2.7: in-app map on both ride screens, no external Maps intent ----
+  const driverPage27 = await (await fetch(BASE + "/driver")).text();
+  check("in-app map: rider trip map + driver active-ride map present, Leaflet loaded on both", riderPage21.includes("trip-map") && riderPage21.includes("leaflet") && driverPage27.includes("driver-trip-map") && driverPage27.includes("leaflet"));
+  check("no external Maps intent on ride screens: no google.com/maps link in rider/driver pages", !riderPage21.includes("google.com/maps") && !driverPage27.includes("google.com/maps"));
   // v2.4: GPS must start only on a real tap — no silent load-time call
   // (it burned the one-shot permission prompt), and a denial must show
   // the settings hint + a Retry button instead of a dead end.
@@ -1007,7 +1024,7 @@ async function main() {
   // All v2.3 tests run on the pilot accounts (pilot mode is ON, bike,
   // Chunian City -> Chunian City) so nothing after them depends on state.
   const health23 = await call("/api/health");
-  check("v2.6.0 health version is 2.6.0", health23.version === "2.6.0", `got ${health23.version}`);
+  check("v2.7.0 health version is 2.7.0", health23.version === "2.7.0", `got ${health23.version}`);
   // Valid Web Push subscription keys for the subscribe tests: web-push
   // rejects anything else at send time (p256dh must be a 65-byte P-256
   // point, auth 16 bytes) — a made-up key string never reaches the wire.

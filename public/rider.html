@@ -146,6 +146,12 @@
       <p class="eyebrow">Rider</p>
       <h2 data-i18n="live_trip">Your ride</h2>
       <div id="trip-info"></div>
+      <div id="trip-map" class="v23-map"></div>
+      <p class="muted" id="trip-route-info"></p>
+      <div class="row">
+        <button id="btn-trip-live" data-i18n="map_show_live">📍 Show my live location</button>
+      </div>
+      <p class="form-err" id="trip-gps-err" role="alert"></p>
       <div class="row">
         <button id="btn-share" data-i18n="share_trip">🔗 Share trip</button>
         <button class="danger" id="btn-sos" data-i18n="sos">🆘 SOS</button>
@@ -277,6 +283,7 @@
   $("btn-rider-login").addEventListener("click", (e) => riderLogin(e.currentTarget));
   $("btn-gps").addEventListener("click", () => requestGpsPickup());
   $("btn-find-driver").addEventListener("click", (e) => requestRide(e.currentTarget));
+  $("btn-trip-live").addEventListener("click", () => startTripLiveGps());
   $("btn-share").addEventListener("click", (e) => shareTrip(e.currentTarget));
   $("btn-sos").addEventListener("click", (e) => sosTrip(e.currentTarget));
   $("btn-cancel").addEventListener("click", (e) => cancelRide(e.currentTarget));
