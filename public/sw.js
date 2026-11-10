@@ -1,10 +1,10 @@
-// Chunian Ride — service worker (v2.4.0, zero-budget PWA).
+// Chunian Ride — service worker (v2.4.1, zero-budget PWA).
 // Cache-first for same-origin static assets (CSS/JS/images/fonts);
 // network-first for /api/* and for HTML (the app sets Cache-Control:
 // no-store on HTML, so pages are never served stale from this cache).
 // Versioned cache name — bump on every release so old assets die.
-// v2.4.0 cache supersedes the old chunian-ride-v2.3.0 cache (deleted on activate).
-const CACHE_NAME = "chunian-ride-v2.4.0";
+// v2.4.1 cache supersedes the old chunian-ride-v2.4.0 cache (deleted on activate).
+const CACHE_NAME = "chunian-ride-v2.4.1";
 const STATIC_RE = /\.(css|js|png|jpg|jpeg|webp|svg|ico|woff2?)$/i;
 
 self.addEventListener("install", (event) => {

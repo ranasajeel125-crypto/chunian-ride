@@ -514,6 +514,11 @@ function initLangToggle() {
 }
 
 // ---------- Toast (replaces every alert()) ----------
+// v2.4.1: only ONE toast visible at a time. A new toast replaces whatever
+// is showing instead of stacking — repeated GPS-denial taps used to pile
+// up identical red banners (six on the owner's phone). The ~4.2s
+// auto-dismiss is unchanged; the timer of a replaced toast removes the
+// detached element, which is harmless.
 function toast(msg, kind) {
   let box = $("toast-box");
   if (!box) {
@@ -522,6 +527,7 @@ function toast(msg, kind) {
     box.className = "toast-box";
     document.body.appendChild(box);
   }
+  box.replaceChildren();
   const el = document.createElement("div");
   el.className = "toast" + (kind === "error" ? " toast-error" : kind === "ok" ? " toast-ok" : "");
   el.textContent = msg;

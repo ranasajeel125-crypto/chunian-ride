@@ -139,9 +139,11 @@ function requestGpsPickup() {
         // where to allow location, and a Retry button — after the rider
         // allows it in settings, Retry works; while the origin is still
         // denied the platform will not re-prompt, and the hint says so.
+        // v2.4.1: no error toast here — showGpsDenied() already renders
+        // the same message inline, and a toast on every denial stacked
+        // identical red banners on repeated taps.
         fallbackPickup();
         showGpsDenied();
-        toast(t("gps_denied"), "error");
       } else {
         toast(t("gps_unavailable"), "error");
         fallbackPickup();

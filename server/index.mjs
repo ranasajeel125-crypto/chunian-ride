@@ -144,7 +144,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "2.4.0", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.4.1", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 // App update check (v2.1): single source of truth for the latest APK.
