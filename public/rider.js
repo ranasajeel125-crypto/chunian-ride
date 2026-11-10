@@ -113,6 +113,13 @@ async function initMap() {
 // show its permission dialog. Only a genuine failure/denial falls back
 // to Chunian City — and a denial says plainly what to do, with a Retry
 // button that re-invokes the prompt once the rider has allowed location.
+// v2.7.1: in the installed APK the tap asks Android for the runtime
+// permission FIRST (JS bridge) — the native Allow dialog appears on top
+// of the app. Only when Android says the permission is permanently
+// denied ("don't ask again") does the page show the Settings hint; a
+// plain denial shows the Retry hint and the next tap shows the popup
+// again. In a browser there is no bridge — a denial means the browser
+// will not re-prompt for this origin, so the Settings hint is right.
 function requestGpsPickup() {
   if (!("geolocation" in navigator)) {
     toast(t("gps_unavailable"), "error");
@@ -120,6 +127,13 @@ function requestGpsPickup() {
     return;
   }
   setErr($("gps-err"), t("gps_waiting"));
+  if (requestNativeLocationPermission((granted, permanentlyDenied) => {
+    if (granted) requestGpsPickupDirect();
+    else { fallbackPickup(); showGpsDenied(permanentlyDenied); }
+  })) return; // bridge asked the OS; the result comes back via the callback
+  requestGpsPickupDirect();
+}
+function requestGpsPickupDirect() {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       gpsPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -136,15 +150,18 @@ function requestGpsPickup() {
     (err) => {
       if (err.code === 1) {
         // Permission denied: fall back to Chunian City, but do not hide
-        // the denial behind the generic fallback text. Show what happened,
-        // where to allow location, and a Retry button — after the rider
-        // allows it in settings, Retry works; while the origin is still
-        // denied the platform will not re-prompt, and the hint says so.
+        // the denial behind the generic fallback text. Show what happened
+        // and a Retry button.
+        // v2.7.1: a direct-call denial in a browser means the browser
+        // will not re-prompt for this origin (Settings hint is right).
+        // In the APK this path is only reached if the WebView prompt
+        // itself was denied after the OS granted — the OS can still be
+        // asked again, so show the Retry hint instead.
         // v2.4.1: no error toast here — showGpsDenied() already renders
         // the same message inline, and a toast on every denial stacked
         // identical red banners on repeated taps.
         fallbackPickup();
-        showGpsDenied();
+        showGpsDenied(!hasLocationBridge());
       } else {
         toast(t("gps_unavailable"), "error");
         fallbackPickup();
@@ -153,10 +170,14 @@ function requestGpsPickup() {
     { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
   );
 }
-function showGpsDenied() {
+// v2.7.1: the Settings guidance appears ONLY when the permission is
+// permanently denied. Otherwise the Retry hint — the next tap shows the
+// native Allow popup again, right in the app.
+function showGpsDenied(permanent) {
   const el = $("gps-err");
   if (!el) return;
-  el.innerHTML = `<b>${escapeHtml(t("gps_denied"))}</b><br><span class="muted">${escapeHtml(t("gps_settings_hint"))}</span> <button type="button" class="secondary" id="gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
+  const hint = permanent ? t("gps_settings_hint") : t("gps_retry_hint");
+  el.innerHTML = `<b>${escapeHtml(t("gps_denied"))}</b><br><span class="muted">${escapeHtml(hint)}</span> <button type="button" class="secondary" id="gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
   const retry = $("gps-retry");
   if (retry) retry.addEventListener("click", () => requestGpsPickup());
 }
@@ -450,13 +471,22 @@ function destroyTripMap() {
 }
 // v2.7: the rider's own live marker starts ONLY on a real tap of the
 // "Show my live location" button (v2.4 rule — never silent on load).
-// Denial shows the settings hint + Retry inline, single toast rule kept:
+// Denial shows the hint + Retry inline, single toast rule kept:
 // no toast here, the inline message is the notice (same as showGpsDenied).
+// v2.7.1: bridge-first, same as requestGpsPickup — the native popup
+// appears on this tap in the APK; Settings hint only when permanently denied.
 function startTripLiveGps() {
   if (!currentRide) { toast(t("no_active_ride"), "error"); return; }
   if (tripWatchId !== null) return;
   if (!("geolocation" in navigator)) { toast(t("gps_unavailable"), "error"); return; }
   setErr($("trip-gps-err"), t("gps_waiting"));
+  if (requestNativeLocationPermission((granted, permanentlyDenied) => {
+    if (granted) startTripLiveGpsDirect();
+    else showTripGpsDenied(permanentlyDenied);
+  })) return; // bridge asked the OS; the result comes back via the callback
+  startTripLiveGpsDirect();
+}
+function startTripLiveGpsDirect() {
   tripWatchId = navigator.geolocation.watchPosition(
     (pos) => {
       setErr($("trip-gps-err"), "");
@@ -466,19 +496,19 @@ function startTripLiveGps() {
     },
     (err) => {
       stopTripLiveGps();
-      if (err.code === 1) {
-        const el = $("trip-gps-err");
-        if (el) {
-          el.innerHTML = `<b>${escapeHtml(t("gps_denied"))}</b><br><span class="muted">${escapeHtml(t("gps_settings_hint"))}</span> <button type="button" class="secondary" id="trip-gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
-          const retry = $("trip-gps-retry");
-          if (retry) retry.addEventListener("click", () => startTripLiveGps());
-        }
-      } else {
-        toast(t("gps_unavailable"), "error");
-      }
+      if (err.code === 1) showTripGpsDenied(!hasLocationBridge());
+      else toast(t("gps_unavailable"), "error");
     },
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
   );
+}
+function showTripGpsDenied(permanent) {
+  const el = $("trip-gps-err");
+  if (!el) return;
+  const hint = permanent ? t("gps_settings_hint") : t("gps_retry_hint");
+  el.innerHTML = `<b>${escapeHtml(t("gps_denied"))}</b><br><span class="muted">${escapeHtml(hint)}</span> <button type="button" class="secondary" id="trip-gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
+  const retry = $("trip-gps-retry");
+  if (retry) retry.addEventListener("click", () => startTripLiveGps());
 }
 function stopTripLiveGps() {
   if (tripWatchId !== null) { try { navigator.geolocation.clearWatch(tripWatchId); } catch {} tripWatchId = null; }

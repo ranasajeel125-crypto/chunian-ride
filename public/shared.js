@@ -175,6 +175,7 @@ const STRINGS = {
     gps_weak_banner: "Weak GPS signal — move outdoors for a better fix.",
     gps_retry: "Retry GPS",
     gps_settings_hint: "Open your phone Settings → Location → allow Chunian Ride.",
+    gps_retry_hint: "Tap Retry GPS — the Allow option will appear right here in the app.",
     call_btn: "📞 Call",
     call_incoming: "Incoming call…",
     call_accept: "Accept call",
@@ -401,6 +402,7 @@ const STRINGS = {
     gps_weak_banner: "جی پی ایس سگنل کمزور ہے — بہتر سگنل کے لیے باہر جائیں۔",
     gps_retry: "دوبارہ کوشش کریں",
     gps_settings_hint: "فون کی سیٹنگز → لوکیشن کھولیں → چونیاں رائیڈ کو اجازت دیں۔",
+    gps_retry_hint: "Retry GPS دبائیں — Allow کا آپشن اسی ایپ میں نظر آئے گا۔",
     call_btn: "📞 کال کریں",
     call_incoming: "کال آ رہی ہے…",
     call_accept: "کال قبول کریں",
@@ -581,6 +583,39 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(translateError(data.error || ("HTTP " + res.status)));
   return data;
+}
+
+// ---------- In-app native location permission (v2.7.1) ----------
+// In the installed APK the page can ask Android for the runtime location
+// permission directly (JS bridge `window.ChunianRide`), so the system
+// Allow/Deny dialog appears on top of the app on a real tap (Retry GPS /
+// Use my location) — no Settings trip. In a browser there is no bridge,
+// so the normal getCurrentPosition/watchPosition call shows the browser's
+// own popup instead.
+// The bridge reports back via window.__chunianRideLocationResult(granted,
+// permanentlyDenied). permanentlyDenied is true ONLY when Android says the
+// user chose "don't ask again" — that is the ONLY case where the page
+// shows the Settings guidance; a plain denial just shows the Retry hint
+// and the next tap shows the popup again.
+let locationBridgeResultHandler = null;
+window.__chunianRideLocationResult = function (granted, permanentlyDenied) {
+  if (!locationBridgeResultHandler) return;
+  const h = locationBridgeResultHandler;
+  locationBridgeResultHandler = null;
+  h(granted, permanentlyDenied);
+};
+function hasLocationBridge() {
+  return !!(window.ChunianRide && typeof window.ChunianRide.requestLocationPermission === "function");
+}
+// Ask the OS for location permission via the APK bridge. Returns true
+// when the bridge handled it (the result arrives async through the
+// callback above); false when there is no bridge — the caller then falls
+// back to a direct geolocation call.
+function requestNativeLocationPermission(onResult) {
+  if (!hasLocationBridge()) return false;
+  locationBridgeResultHandler = onResult || null;
+  window.ChunianRide.requestLocationPermission();
+  return true;
 }
 
 // ---------- Google sign-in (v2.5) ----------

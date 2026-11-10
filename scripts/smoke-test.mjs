@@ -602,7 +602,7 @@ async function main() {
 
   // ================= v2.2 =================
   const health21 = await call("/api/health");
-  check("version is 2.7.0", health21.version === "2.7.0", `got ${health21.version}`);
+  check("version is 2.7.1", health21.version === "2.7.1", `got ${health21.version}`);
 
   // ---- PWA ----
   const manifestRes = await fetch(BASE + "/manifest.json");
@@ -614,15 +614,17 @@ async function main() {
   check("icon 512 serves 200", (await fetch(BASE + "/icons/icon-512.png")).status === 200);
   const swRes = await fetch(BASE + "/sw.js");
   const swText = await swRes.text();
-  check("sw.js serves 200 with versioned cache chunian-ride-v2.7.0", swRes.status === 200 && swText.includes("chunian-ride-v2.7.0"));
+  check("sw.js serves 200 with versioned cache chunian-ride-v2.7.1", swRes.status === 200 && swText.includes("chunian-ride-v2.7.1"));
   const landing21 = await (await fetch(BASE + "/")).text();
-  check("landing footer says v2.7 + links manifest", landing21.includes("Chunian Ride v2.7") && landing21.includes("/manifest.json"));
+  check("landing footer says v2.7.1 + links manifest", landing21.includes("Chunian Ride v2.7.1") && landing21.includes("/manifest.json"));
 
   const riderPage21 = await (await fetch(BASE + "/rider")).text();
   check("rider page has promo input + notification bell + rider top-up card", riderPage21.includes("promo-code") && riderPage21.includes("notif-bell") && riderPage21.includes("rider-topup-amount"));
-  // ---- v2.7: web-only release — app-version 2.7/code 10, APK stays v2.6 ----
+  // ---- v2.7.1: APK release — app-version 2.7.1/code 11, apkUrl the new APK ----
   const appVer = await call("/api/app-version");
-  check("app-version is 2.7 / code 10, apkUrl still the v2.6 APK (web-only release)", appVer.version === "2.7" && appVer.versionCode === 10 && appVer.apkUrl === "/downloads/ChunianRide-v2.6.apk", JSON.stringify(appVer));
+  check("app-version is 2.7.1 / code 11, apkUrl the v2.7.1 APK", appVer.version === "2.7.1" && appVer.versionCode === 11 && appVer.apkUrl === "/downloads/ChunianRide-v2.7.1.apk", JSON.stringify(appVer));
+  const apkRes = await fetch(BASE + "/downloads/ChunianRide-v2.7.1.apk");
+  check("v2.7.1 APK download serves 200 + non-trivial size", apkRes.status === 200 && Number(apkRes.headers.get("content-length") || 0) > 100000, `HTTP ${apkRes.status}`);
   // ---- v2.7: in-app map on both ride screens, no external Maps intent ----
   const driverPage27 = await (await fetch(BASE + "/driver")).text();
   check("in-app map: rider trip map + driver active-ride map present, Leaflet loaded on both", riderPage21.includes("trip-map") && riderPage21.includes("leaflet") && driverPage27.includes("driver-trip-map") && driverPage27.includes("leaflet"));
@@ -637,6 +639,14 @@ async function main() {
   const sharedJs241 = await (await fetch(BASE + "/shared.js")).text();
   check("toast() replaces previous toast (no stacking)", sharedJs241.includes("box.replaceChildren()"));
   check("rider.js GPS denial shows inline hint only, no error toast", !riderJs24.includes('toast(t("gps_denied")'));
+  // v2.7.1: Retry GPS asks the OS for the permission IN-APP (JS bridge)
+  // — the Settings guidance appears ONLY when the permission is
+  // permanently denied ("don't ask again"); a plain denial shows the
+  // Retry hint and the next tap shows the popup again.
+  const driverJs271 = await (await fetch(BASE + "/driver.js")).text();
+  check("shared.js exposes the location bridge (ChunianRide + result callback)", sharedJs241.includes("window.__chunianRideLocationResult") && sharedJs241.includes("function requestNativeLocationPermission") && sharedJs241.includes("gps_retry_hint"));
+  check("rider.js GPS: bridge-first pickup + trip live GPS, Settings hint only when permanent", riderJs24.includes("requestNativeLocationPermission") && riderJs24.includes("function requestGpsPickupDirect") && riderJs24.includes("function startTripLiveGpsDirect") && riderJs24.includes("showGpsDenied(permanent") && riderJs24.includes("showTripGpsDenied(permanent"));
+  check("driver.js GPS: Retry GPS goes through the bridge, banner hint follows permanence", driverJs271.includes("function retryGps") && driverJs271.includes("requestNativeLocationPermission") && driverJs271.includes("gpsPermanentlyDenied") && driverJs271.includes("gps_retry_hint"));
   const driverPage21 = await (await fetch(BASE + "/driver")).text();
   check("driver page has withdrawal form + documents card + bell", driverPage21.includes("withdraw-amount") && driverPage21.includes("docs-list") && driverPage21.includes("notif-bell"));
   check("driver page splits Login vs Register with plain-word explainers", driverPage21.includes("driver_signup_title") && driverPage21.includes("driver_signup_sub") && driverPage21.includes("driver_login_sub") && driverPage21.includes("btn-goto-register"));
@@ -1024,7 +1034,7 @@ async function main() {
   // All v2.3 tests run on the pilot accounts (pilot mode is ON, bike,
   // Chunian City -> Chunian City) so nothing after them depends on state.
   const health23 = await call("/api/health");
-  check("v2.7.0 health version is 2.7.0", health23.version === "2.7.0", `got ${health23.version}`);
+  check("v2.7.1 health version is 2.7.1", health23.version === "2.7.1", `got ${health23.version}`);
   // Valid Web Push subscription keys for the subscribe tests: web-push
   // rejects anything else at send time (p256dh must be a 65-byte P-256
   // point, auth 16 bytes) — a made-up key string never reaches the wire.

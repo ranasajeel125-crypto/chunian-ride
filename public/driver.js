@@ -15,15 +15,22 @@ let topupPicker = null;
 
 // ---------- GPS state (v2.3) ----------
 // lastGps: {lat, lng, accuracy (m), updatedAt (ms)} from watchPosition.
+// gpsPermanentlyDenied (v2.7.1): true ONLY when the system says the
+// permission is permanently denied ("don't ask again") — that is the
+// only state where the banner shows the Settings guidance. Any other
+// denial shows the Retry hint, and the next Retry tap shows the native
+// Allow popup again, right in the app.
 let lastGps = null;
 let gpsState = "unknown"; // unknown | ok | weak | denied | off | unavailable
+let gpsPermanentlyDenied = false;
 function renderGpsState() {
   const banner = $("gps-banner"), detail = $("gps-detail");
   if (!banner) return;
   let html = "", cls = "";
   if (gpsState === "denied") {
     cls = "v23-gps-banner v23-gps-bad";
-    html = `<b>${escapeHtml(t("gps_denied_banner"))}</b><br><span class="muted">${escapeHtml(t("gps_settings_hint"))}</span> <button type="button" class="secondary" id="gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
+    const hint = gpsPermanentlyDenied ? t("gps_settings_hint") : t("gps_retry_hint");
+    html = `<b>${escapeHtml(t("gps_denied_banner"))}</b><br><span class="muted">${escapeHtml(hint)}</span> <button type="button" class="secondary" id="gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
   } else if (gpsState === "off" || gpsState === "unavailable") {
     cls = "v23-gps-banner v23-gps-bad";
     html = `<b>${escapeHtml(t(gpsState === "off" ? "gps_off_banner" : "gps_unavailable"))}</b> <button type="button" class="secondary" id="gps-retry">${escapeHtml(t("gps_retry"))}</button>`;
@@ -38,7 +45,22 @@ function renderGpsState() {
   banner.innerHTML = html;
   if (detail) detail.textContent = lastGps ? `${lastGps.lat.toFixed(5)}, ${lastGps.lng.toFixed(5)}` : "";
   const retry = $("gps-retry");
-  if (retry) retry.addEventListener("click", () => { stopLocationSharing(); startLocationSharing(); });
+  if (retry) retry.addEventListener("click", () => retryGps());
+}
+// v2.7.1: Retry GPS asks Android for the runtime permission FIRST (JS
+// bridge) so the native Allow dialog appears on top of the app — no
+// Settings trip. On grant, location sharing restarts; on a plain denial
+// the banner keeps the Retry hint (the popup can appear again); only a
+// permanent denial ("don't ask again") switches the banner to the
+// Settings guidance. In a browser there is no bridge — the direct
+// geolocation call shows the browser's own popup.
+function retryGps() {
+  stopLocationSharing();
+  if (requestNativeLocationPermission((granted, permanentlyDenied) => {
+    if (granted) { gpsPermanentlyDenied = false; startLocationSharing(); }
+    else { gpsPermanentlyDenied = permanentlyDenied; setGpsState("denied"); }
+  })) return; // bridge asked the OS; result comes back via the callback
+  startLocationSharing();
 }
 function setGpsState(s) { gpsState = s; renderGpsState(); }
 
@@ -121,7 +143,14 @@ function startLocationSharing() {
       postDriverLocation(pos.coords.latitude, pos.coords.longitude);
     },
     (err) => {
-      if (err.code === 1) { setGpsState("denied"); setLocStatus(t("gps_denied")); }
+      if (err.code === 1) {
+        // v2.7.1: in a browser a denial means the browser will not
+        // re-prompt for this origin (Settings guidance is right). In the
+        // APK the bridge reports permanence, so a direct denial here is
+        // not permanent — the next Retry tap shows the popup again.
+        gpsPermanentlyDenied = !hasLocationBridge();
+        setGpsState("denied"); setLocStatus(t("gps_denied"));
+      }
       else { setGpsState("off"); setLocStatus(t("gps_unavailable")); }
     },
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
