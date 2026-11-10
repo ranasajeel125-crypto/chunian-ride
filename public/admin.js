@@ -103,6 +103,24 @@ const STRINGS = {
     commission: "Commission %",
     booking_fee: "Booking fee Rs / ride",
     min_topup: "Minimum top-up (Rs)",
+    min_withdrawal: "Minimum withdrawal (Rs)",
+    settings_owner_note: "Owner name is shown for reference only — there is no admin endpoint to change it.",
+    push_title: "Web push (notifications)",
+    push_note: "Web push (VAPID) is enabled on the server, so in-app notifications can also reach a rider's or driver's browser. The public key is only available to a logged-in user session — it is not shown here, and admin sessions cannot subscribe.",
+    doc_expires: "Expires",
+    doc_expired: "Expired",
+    doc_expires_soon: "Expires soon",
+    doc_no_expiry: "No expiry date",
+    reminder_due: "⏰ Reminder due — starts within 30 min",
+    rides_reminder_note: "Reminder: the server sends a reminder when a scheduled ride is due within 30 minutes. This list shows the scheduled time — the API does not say whether the reminder was actually sent.",
+    nav_client_errors: "Client Errors",
+    client_errors_title: "Client Errors",
+    client_errors_note: "Latest 100 reports, newest first. The app sends one when a JavaScript error happens.",
+    empty_client_errors: "No client errors reported.",
+    client_error_user: "User",
+    client_error_page: "Page",
+    client_error_agent: "Browser",
+    client_error_show_stack: "Show stack trace",
     settings_numbers: "Payment & support numbers",
     jazzcash: "JazzCash number",
     sadapay: "Sadapay number",
@@ -368,6 +386,24 @@ const STRINGS = {
     commission: "کمیشن %",
     booking_fee: "بکنگ فیس روپے / رائڈ",
     min_topup: "کم از کم ٹاپ اپ (روپے)",
+    min_withdrawal: "کم از کم نکالنا (روپے)",
+    settings_owner_note: "اونر کا نام صرف معلومات کے لیے دکھایا گیا ہے — اسے بدلنے کا کوئی ایڈمن اینڈ پوائنٹ نہیں ہے۔",
+    push_title: "ویب پش (اطلاعات)",
+    push_note: "ویب پش (VAPID) سرور پر فعال ہے، اس لیے ایپ کی اطلاعات رائیڈر یا ڈرائیور کے براؤزر تک بھی پہنچ سکتی ہیں۔ پبلک کی صرف لاگ ان یوزر سیشن کو ملتی ہے — یہ یہاں نہیں دکھائی جاتی، اور ایڈمن سیشن سبسکرائب نہیں کر سکتا۔",
+    doc_expires: "میعاد",
+    doc_expired: "میعاد ختم",
+    doc_expires_soon: "میعاد قریب",
+    doc_no_expiry: "کوئی میعاد نہیں",
+    reminder_due: "⏰ ریمائنڈر — 30 منٹ میں شروع",
+    rides_reminder_note: "ریمائنڈر: سرور شیڈول رائیڈ کے 30 منٹ میں ہونے پر ریمائنڈر بھیجتا ہے۔ یہ فہرست طے شدہ وقت دکھاتی ہے — API یہ نہیں بتاتا کہ ریمائنڈر واقعی بھیجا گیا یا نہیں۔",
+    nav_client_errors: "کلائنٹ ایررز",
+    client_errors_title: "کلائنٹ ایررز",
+    client_errors_note: "تازہ ترین 100 رپورٹس، نئی پہلے۔ ایپ میں جاوا اسکرپٹ خرابی ہونے پر ایک رپورٹ بھیجتی ہے۔",
+    empty_client_errors: "کوئی کلائنٹ ایرر رپورٹ نہیں ہوا۔",
+    client_error_user: "یوزر",
+    client_error_page: "صفحہ",
+    client_error_agent: "براؤزر",
+    client_error_show_stack: "اسٹیک ٹریس دکھائیں",
     settings_numbers: "ادائیگی اور سپورٹ نمبر",
     jazzcash: "جاز کیش نمبر",
     sadapay: "سدا پے نمبر",
@@ -568,6 +604,9 @@ const NOTIF_TEMPLATES = {
     doc_approved: { title: "Document approved", body: "Your {doc} was approved." },
     doc_rejected: { title: "Document rejected", body: "Your {doc} was rejected. Please re-upload." },
     sos_alert: { title: "🚨 SOS ALERT — Ride #{ride}", body: "Emergency! {message}" },
+    // v2.3 — kept in sync with public/shared.js NOTIF_TEMPLATES.
+    new_ride_request: { title: "New ride request", body: "Ride #{ride_id} — {pickup} → {destination} ({vehicle_type}), Rs {proposed_fare}." },
+    scheduled_ride_reminder: { title: "Ride in 30 minutes", body: "Your scheduled ride #{ride} — {pickup} → {destination} — is coming up in 30 minutes." },
   },
   ur: {
     offer_received: { title: "رائڈ #{ride} پر نئی پیشکش", body: "{driver} نے روپے {fare} کی پیشکش کی۔" },
@@ -591,6 +630,9 @@ const NOTIF_TEMPLATES = {
     doc_approved: { title: "دستاویز منظور", body: "آپ کی {doc} منظور ہو گئی۔" },
     doc_rejected: { title: "دستاویز مسترد", body: "آپ کی {doc} مسترد ہو گئی۔ براہ کرم دوبارہ اپ لوڈ کریں۔" },
     sos_alert: { title: "🚨 SOS الرٹ — رائیڈ #{ride}", body: "ایمرجنسی! {message}" },
+    // v2.3 — kept in sync with public/shared.js NOTIF_TEMPLATES.
+    new_ride_request: { title: "نئی رائیڈ درخواست", body: "رائڈ #{ride_id} — {pickup} سے {destination} ({vehicle_type})، روپے {proposed_fare}۔" },
+    scheduled_ride_reminder: { title: "30 منٹ میں رائیڈ", body: "آپ کی شیڈول رائیڈ #{ride} — {pickup} سے {destination} — 30 منٹ میں ہے۔" },
   },
 };
 
@@ -712,6 +754,16 @@ const ERR_MAP = {
   "Pilot limit poori ho gayi — registration band hai": { en: "The pilot limit is full — registration is closed.", ur: "پائلٹ کی حد پوری ہو گئی — رجسٹریشن بند ہے۔" },
   "Pilot driver limit poori ho gayi — mazeed drivers add nahi ho sakte": { en: "The pilot driver limit is full — no more drivers can be added.", ur: "پائلٹ ڈرائیور کی حد پوری ہو گئی — مزید ڈرائیور شامل نہیں ہو سکتے۔" },
   "Pilot rider limit poori ho gayi — mazeed riders add nahi ho sakte": { en: "The pilot rider limit is full — no more riders can be added.", ur: "پائلٹ رائیڈر کی حد پوری ہو گئی — مزید رائیڈر شامل نہیں ہو سکتے۔" },
+  // v2.3 — document expiry / offer expiry (server strings, exact).
+  "document has expired — ask the driver to re-upload": { en: "This document has expired — ask the driver to re-upload a fresh one.", ur: "اس دستاویز کی میعاد ختم ہو گئی ہے — ڈرائیور سے نئی دستاویز دوبارہ اپ لوڈ کرنے کو کہیں۔" },
+  "offer has expired": { en: "This offer has expired.", ur: "اس آفر کی مدت ختم ہو گئی ہے۔" },
+  "expires_at must be a future date": { en: "The expiry date must be in the future.", ur: "میعاد کی تاریخ مستقبل میں ہونی چاہیے۔" },
+  // v2.3 — offer/call errors added by the driver/rider side (keep ERR_MAP
+  // in sync with public/shared.js; i18n-check enforces parity).
+  "offer is no longer pending": { en: "Offer is no longer pending.", ur: "آفر اب زیرِ التوا نہیں ہے۔" },
+  "Sirf driver apni offer accept kar sakta hai": { en: "Only a driver can accept their own offer.", ur: "صرف ڈرائیور ہی اپنی آفر قبول کر سکتا ہے۔" },
+  "Sirf apni offer accept kar sakte hain": { en: "You can only accept your own offer.", ur: "آپ صرف اپنی آفر قبول کر سکتے ہیں۔" },
+  "calls are only available to the rider or assigned driver of an active ride": { en: "Calls are only available to the rider or assigned driver of an active ride.", ur: "کال صرف فعال رائیڈ کے رائیڈر یا مقررہ ڈرائیور کے لیے ہے۔" },
   "Is phone par whitelist entry pehle se hai": { en: "This phone is already on the whitelist.", ur: "یہ فون پہلے سے وائٹ لسٹ پر ہے۔" },
   "Driver ki documents verify nahi — pehle documents approve karwain": { en: "The driver's documents are not verified yet — get the documents approved first.", ur: "ڈرائیور کی دستاویزات ابھی تصدیق شدہ نہیں — پہلے دستاویزات منظور کروائیں۔" },
   "whitelist entry not found": { en: "Whitelist entry not found.", ur: "وائٹ لسٹ انٹری نہیں ملی۔" },
@@ -732,6 +784,10 @@ function fmtDate(ts) {
 function fmtSched(ts) {
   if (!ts) return "";
   return new Date(Number(ts)).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function fmtDay(ts) {
+  if (!ts) return t("unknown");
+  return new Date(Number(ts)).toLocaleDateString();
 }
 function ratingText(rating, count, who) {
   const n = Number(count || 0);
@@ -784,6 +840,9 @@ function setBusy(btn, busy, label) {
 // ---- i18n ----
 function applyLang() {
   document.documentElement.lang = lang === "ur" ? "ur" : "en";
+  // v2.3 RTL: Urdu mirrors the whole layout (see [dir="rtl"] rules in
+  // admin.css / style.css); English stays LTR.
+  document.documentElement.dir = lang === "ur" ? "rtl" : "ltr";
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.getAttribute("data-i18n");
     if (STRINGS[lang][key] != null) el.textContent = t(key);
@@ -844,6 +903,7 @@ const loaders = {
   cities: loadCities,
   settings: loadSettings,
   audit: loadAudit,
+  client_errors: loadClientErrors,
   security: null, // form-driven
 };
 function showSection(name) {
@@ -1010,8 +1070,16 @@ async function loadRides() {
   try {
     const d = await api("/api/admin/rides");
     if (!d.rides.length) { el.innerHTML = `<div class="empty">${escapeHtml(t("empty_rides"))}</div>`; return; }
-    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>#</th><th>${escapeHtml(t("rider"))}</th><th>${escapeHtml(t("driver"))}</th><th>${escapeHtml(t("route"))}</th><th>${escapeHtml(t("vehicle"))}</th><th>${escapeHtml(t("fare"))}</th><th>${escapeHtml(t("fee"))}</th><th>${escapeHtml(t("status"))}</th><th>${escapeHtml(t("tx_date"))}</th></tr></thead><tbody>`
-      + d.rides.map((r) => `<tr><td>${Number(r.id)}</td><td>${escapeHtml(r.rider_name)}</td><td>${escapeHtml(r.driver_name || t("unknown"))}</td><td>${escapeHtml(r.pickup)} → ${escapeHtml(r.destination)}${r.scheduled_for ? `<br><span class="badge amber">🕐 ${escapeHtml(t("scheduled"))}: ${escapeHtml(fmtSched(r.scheduled_for))}</span>` : ""}</td><td>${escapeHtml(r.vehicle_type)}</td><td>Rs ${Number(r.agreed_fare || r.suggested_fare)}${r.tip_amount ? `<br>${escapeHtml(t("tip"))} Rs ${Number(r.tip_amount)}` : ""}</td><td>${r.commission_charged ? "Rs " + Number(r.commission_charged) : t("unknown")}</td><td>${statusBadge(r.status)}</td><td>${escapeHtml(fmtDate(r.created_at))}</td></tr>`).join("")
+    // Reminder indicator (v2.3): a scheduled ride due within 30 minutes.
+    // The API returns scheduled_for but NO reminder-sent flag, so this is
+    // computed from the scheduled time + status — it cannot show whether
+    // the server actually sent the reminder (see rides_reminder_note).
+    const nowMs = Date.now();
+    const reminderDue = (r) => r.scheduled_for && r.status === "requested"
+      && Number(r.scheduled_for) - nowMs > 0
+      && Number(r.scheduled_for) - nowMs <= 30 * 60 * 1000;
+    el.innerHTML = `<p class="muted">${escapeHtml(t("rides_reminder_note"))}</p><div class="table-wrap"><table><thead><tr><th>#</th><th>${escapeHtml(t("rider"))}</th><th>${escapeHtml(t("driver"))}</th><th>${escapeHtml(t("route"))}</th><th>${escapeHtml(t("vehicle"))}</th><th>${escapeHtml(t("fare"))}</th><th>${escapeHtml(t("fee"))}</th><th>${escapeHtml(t("status"))}</th><th>${escapeHtml(t("tx_date"))}</th></tr></thead><tbody>`
+      + d.rides.map((r) => `<tr><td>${Number(r.id)}</td><td>${escapeHtml(r.rider_name)}</td><td>${escapeHtml(r.driver_name || t("unknown"))}</td><td>${escapeHtml(r.pickup)} → ${escapeHtml(r.destination)}${r.scheduled_for ? `<br><span class="badge amber">🕐 ${escapeHtml(t("scheduled"))}: ${escapeHtml(fmtSched(r.scheduled_for))}</span>` : ""}${reminderDue(r) ? `<br><span class="badge red">${escapeHtml(t("reminder_due"))}</span>` : ""}</td><td>${escapeHtml(r.vehicle_type)}</td><td>Rs ${Number(r.agreed_fare || r.suggested_fare)}${r.tip_amount ? `<br>${escapeHtml(t("tip"))} Rs ${Number(r.tip_amount)}` : ""}</td><td>${r.commission_charged ? "Rs " + Number(r.commission_charged) : t("unknown")}</td><td>${statusBadge(r.status)}</td><td>${escapeHtml(fmtDate(r.created_at))}</td></tr>`).join("")
       + "</tbody></table></div>";
   } catch (e) { handleApiError(e); el.innerHTML = `<p class="inline-error">${escapeHtml((e && e.message) || t("err_load"))}</p>`; }
 }
@@ -1026,10 +1094,16 @@ async function loadDrivers() {
     el.innerHTML = d.drivers.map((x) => {
     const cl = x.doc_checklist || { cnic: false, licence: false, vehicle: false, all: false };
     const checkLine = t("docs_checklist", { cnic: cl.cnic ? t("docs_checklist_ok") : t("docs_checklist_no"), licence: cl.licence ? t("docs_checklist_ok") : t("docs_checklist_no"), vehicle: cl.vehicle ? t("docs_checklist_ok") : t("docs_checklist_no") });
+    // v2.3 document expiry: the API checklist carries expired / expires_soon
+    // doc-type lists (approved docs only, 30-day soon window).
+    const expBadges = [
+      ...(cl.expired || []).map((d) => `<span class="badge red">${escapeHtml(t("doc_expired"))}: ${escapeHtml(d)}</span>`),
+      ...(cl.expires_soon || []).map((d) => `<span class="badge amber">${escapeHtml(t("doc_expires_soon"))}: ${escapeHtml(d)}</span>`),
+    ].join(" ");
     return `<div class="row-item">
       <b>${escapeHtml(x.name)}</b> (${escapeHtml(x.phone)}) — ${escapeHtml(x.vehicle_type)} • ${escapeHtml(x.vehicle_model || "")} • ${escapeHtml(x.plate || "")}<br>
       <span class="muted">CNIC: ${escapeHtml(x.cnic || t("unknown"))} • Licence: ${escapeHtml(x.licence || t("unknown"))} • Reg: ${escapeHtml(x.vehicle_reg || t("unknown"))}</span><br>
-      ${escapeHtml(t("status"))}: ${statusBadge(x.status)} • Docs: ${statusBadge(x.documents_status || "pending")} • ${escapeHtml(checkLine)} • Rating: ${escapeHtml(ratingText(x.rating, x.rating_count, "driver"))}${x.demo ? ` • ${escapeHtml(t("demo"))}` : ""} • ${escapeHtml(t("wallet"))} Rs ${Number(x.wallet_balance || 0)} • ${x.online ? escapeHtml(t("online")) : escapeHtml(t("offline"))}
+      ${escapeHtml(t("status"))}: ${statusBadge(x.status)} • Docs: ${statusBadge(x.documents_status || "pending")} • ${escapeHtml(checkLine)}${expBadges ? ` ${expBadges}` : ""} • Rating: ${escapeHtml(ratingText(x.rating, x.rating_count, "driver"))}${x.demo ? ` • ${escapeHtml(t("demo"))}` : ""} • ${escapeHtml(t("wallet"))} Rs ${Number(x.wallet_balance || 0)} • ${x.online ? escapeHtml(t("online")) : escapeHtml(t("offline"))}
       <div class="row-actions">
         ${x.status !== "approved" ? `<button type="button" class="primary small" data-driver-action="approve" data-id="${Number(x.user_id)}">${escapeHtml(t("approve"))}</button>` : ""}
         ${x.status !== "blocked" ? `<button type="button" class="danger small" data-driver-action="block" data-id="${Number(x.user_id)}">${escapeHtml(t("block"))}</button>` : ""}
@@ -1168,10 +1242,10 @@ async function loadDriverDocs(driverId) {
   try {
     const d = await api(`/api/admin/drivers/${driverId}/documents`);
     const cl = d.doc_checklist || { cnic: false, licence: false, vehicle: false };
-    const checkLine = `<p><b>${escapeHtml(t("docs_checklist", { cnic: cl.cnic ? t("docs_checklist_ok") : t("docs_checklist_no"), licence: cl.licence ? t("docs_checklist_ok") : t("docs_checklist_no"), vehicle: cl.vehicle ? t("docs_checklist_ok") : t("docs_checklist_no") }))}</b></p>`;
+    const checkLine = `<p><b>${escapeHtml(t("docs_checklist", { cnic: cl.cnic ? t("docs_checklist_ok") : t("docs_checklist_no"), licence: cl.licence ? t("docs_checklist_ok") : t("docs_checklist_no"), vehicle: cl.vehicle ? t("docs_checklist_ok") : t("docs_checklist_no") }))}</b>${(cl.expired || []).length ? ` <span class="badge red">${escapeHtml(t("doc_expired"))}: ${escapeHtml((cl.expired || []).join(", "))}</span>` : ""}${(cl.expires_soon || []).length ? ` <span class="badge amber">${escapeHtml(t("doc_expires_soon"))}: ${escapeHtml((cl.expires_soon || []).join(", "))}</span>` : ""}</p>`;
     if (!d.documents.length) { box.innerHTML = `<h4>${escapeHtml(t("docs_admin_title"))}</h4>` + checkLine + `<div class="empty">${escapeHtml(t("empty_docs"))}</div>`; return; }
     box.innerHTML = `<h4>${escapeHtml(t("docs_admin_title"))}</h4>` + checkLine + d.documents.map((doc) => `<div class="doc-row">
-      <span><b>${docLabelAdmin(doc.doc_type)}</b> • ${statusBadge(doc.status)}<br><span class="muted">${escapeHtml(fmtDate(doc.created_at))}</span></span>
+      <span><b>${docLabelAdmin(doc.doc_type)}</b> • ${statusBadge(doc.status)}${doc.expired ? ` <span class="badge red">${escapeHtml(t("doc_expired"))}</span>` : doc.expires_soon ? ` <span class="badge amber">${escapeHtml(t("doc_expires_soon"))}</span>` : ""}<br><span class="muted">${escapeHtml(t("doc_expires"))}: ${doc.expires_at ? escapeHtml(fmtDay(doc.expires_at)) : escapeHtml(t("doc_no_expiry"))} • ${escapeHtml(fmtDate(doc.created_at))}</span></span>
       ${doc.data_url ? `<img class="doc-thumb" src="${escapeHtml(doc.data_url)}" alt="${escapeHtml(doc.doc_type)}">` : ""}
       <span class="row-actions">
         ${doc.status !== "approved" ? `<button type="button" class="primary small" data-doc-action="approve" data-id="${Number(doc.id)}" data-driver="${Number(driverId)}">${escapeHtml(t("approve"))}</button>` : ""}
@@ -1184,7 +1258,20 @@ async function docAction(id, action, driverId) {
     await api(`/api/admin/documents/${id}/${action}`, { method: "POST", body: "{}" });
     toast(action === "approve" ? t("toast_doc_approved") : t("toast_doc_rejected"), "ok");
     loadDriverDocs(driverId); loadDrivers();
-  } catch (e) { handleApiError(e); }
+  } catch (e) {
+    // v2.3: approving an expired document is a 400 with the exact server
+    // message ("document has expired — ask the driver to re-upload",
+    // translated via ERR_MAP). Surface it in a toast AND persistently in
+    // the documents panel — never fail silently.
+    handleApiError(e);
+    const box = $("docs-for-" + driverId);
+    if (box) {
+      const p = document.createElement("p");
+      p.className = "inline-error";
+      p.textContent = (e && e.message) || t("err_load");
+      box.prepend(p);
+    }
+  }
 }
 
 // ---- Notifications (v2.1, in-app feed) ----
@@ -1393,6 +1480,13 @@ async function loadSettings() {
     $("set-support-phone").value = s.support_phone ?? "";
     $("set-support-whatsapp").value = s.support_whatsapp ?? "";
     $("set-min-topup").value = s.min_topup ?? 500;
+    // v2.3: min_withdrawal was missing from this form (endpoint accepts it).
+    $("set-min-withdrawal").value = s.min_withdrawal ?? 100;
+    // v2.3 (integration): owner_name now has an admin update endpoint
+    // (added to the POST /api/admin/settings allow-list), so it is editable.
+    $("set-owner-name").value = s.owner_name ?? "";
+    // sadapay_number: empty string from the API stays empty here (the
+    // placeholder "—" shows). Never invent a number.
   } catch (e) { handleApiError(e, err); }
 }
 async function saveSettings(btn) {
@@ -1415,6 +1509,8 @@ async function saveSettings(btn) {
     support_phone: $("set-support-phone").value,
     support_whatsapp: $("set-support-whatsapp").value,
     min_topup: $("set-min-topup").value,
+    min_withdrawal: $("set-min-withdrawal").value,
+    owner_name: $("set-owner-name").value,
   };
   setBusy(btn, true, "…");
   try {
@@ -1459,6 +1555,25 @@ function exportAuditCsv() {
   if (to) q.set("to", String(new Date(to + "T23:59:59").getTime()));
   const qs = q.toString();
   window.location.href = "/api/admin/audit-log/export" + (qs ? "?" + qs : "");
+}
+
+// ---- Client errors (v2.3, §2.11) ----
+// GET /api/admin/client-errors — latest 100, newest first. Stack is
+// collapsible (it can be up to 4000 chars); everything is HTML-escaped.
+async function loadClientErrors() {
+  const el = $("client-errors-out");
+  el.innerHTML = `<p class="loading">${escapeHtml(t("loading"))}</p>`;
+  try {
+    const d = await api("/api/admin/client-errors");
+    if (!d.client_errors.length) { el.innerHTML = `<div class="empty">${escapeHtml(t("empty_client_errors"))}</div>`; return; }
+    el.innerHTML = `<p class="muted">${escapeHtml(t("client_errors_note"))}</p>` + d.client_errors.map((e) => `<div class="row-item">
+      <b>#${Number(e.id)} — ${escapeHtml(e.message || t("unknown"))}</b><br>
+      <span class="muted">${escapeHtml(t("client_error_user"))}: ${e.user_id != null ? "#" + Number(e.user_id) : "—"} • ${escapeHtml(fmtDate(e.created_at))}</span>
+      ${e.url ? `<br><span class="muted">${escapeHtml(t("client_error_page"))}: ${escapeHtml(e.url)}</span>` : ""}
+      ${e.user_agent ? `<br><span class="muted">${escapeHtml(t("client_error_agent"))}: ${escapeHtml(e.user_agent)}</span>` : ""}
+      ${e.stack ? `<details class="stack-details"><summary>${escapeHtml(t("client_error_show_stack"))}</summary><pre class="stack-pre">${escapeHtml(e.stack)}</pre></details>` : ""}
+    </div>`).join("");
+  } catch (e) { handleApiError(e); el.innerHTML = `<p class="inline-error">${escapeHtml((e && e.message) || t("err_load"))}</p>`; }
 }
 
 // ---- Pilot launch (v2.2) ----

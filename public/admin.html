@@ -8,7 +8,7 @@
 <meta name="description" content="Chunian Ride owner admin dashboard — rides, drivers, top-ups, wallets, promo codes, cities and settings.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
-<link rel="stylesheet" href="/admin.css?v=8">
+<link rel="stylesheet" href="/admin.css?v=9">
 <link rel="icon" type="image/png" href="/favicon.png?v=2">
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -88,6 +88,7 @@
       <button class="nav-btn" type="button" data-section="cities"><span class="ico">📍</span><span data-i18n="nav_cities">Cities</span></button>
       <button class="nav-btn" type="button" data-section="settings"><span class="ico">⚙️</span><span data-i18n="nav_settings">Settings</span></button>
       <button class="nav-btn" type="button" data-section="audit"><span class="ico">📜</span><span data-i18n="nav_audit">Audit Log</span></button>
+      <button class="nav-btn" type="button" data-section="client-errors"><span class="ico">🐞</span><span data-i18n="nav_client_errors">Client Errors</span></button>
       <button class="nav-btn" type="button" data-section="security"><span class="ico">🔒</span><span data-i18n="nav_security">Security</span></button>
     </aside>
 
@@ -106,6 +107,7 @@
         <option value="cities" data-i18n="nav_cities">Cities</option>
         <option value="settings" data-i18n="nav_settings">Settings</option>
         <option value="audit" data-i18n="nav_audit">Audit Log</option>
+        <option value="client-errors" data-i18n="nav_client_errors">Client Errors</option>
         <option value="security" data-i18n="nav_security">Security</option>
       </select>
 
@@ -329,6 +331,7 @@
             <div><label for="set-commission" data-i18n="commission">Commission %</label><input id="set-commission" type="number" min="0" max="100"></div>
             <div><label for="set-fee" data-i18n="booking_fee">Booking fee Rs / ride</label><input id="set-fee" type="number" min="0"></div>
             <div><label for="set-min-topup" data-i18n="min_topup">Minimum top-up (Rs)</label><input id="set-min-topup" type="number" min="0"></div>
+            <div><label for="set-min-withdrawal" data-i18n="min_withdrawal">Minimum withdrawal (Rs)</label><input id="set-min-withdrawal" type="number" min="0"></div>
           </div>
           <h3 data-i18n="settings_numbers">Payment &amp; support numbers</h3>
           <div class="form-grid">
@@ -337,9 +340,15 @@
             <div><label for="set-support-phone" data-i18n="support_phone">Support phone</label><input id="set-support-phone" inputmode="tel" placeholder="—"></div>
             <div><label for="set-support-whatsapp" data-i18n="support_whatsapp">Support WhatsApp</label><input id="set-support-whatsapp" inputmode="tel" placeholder="—"></div>
           </div>
+          <div><label for="set-owner-name" data-i18n="label_name">Owner name</label><input id="set-owner-name"></div>
+          <p class="muted" data-i18n="settings_owner_note">Owner name is shown for reference only — there is no admin endpoint to change it.</p>
           <p class="inline-error" id="settings-error" role="alert"></p>
           <button class="primary" id="settings-save-btn" type="button" data-i18n="settings_save">Save settings</button>
           <p class="muted" id="settings-out" style="margin-top:10px"></p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="push_title">Web push (notifications)</h3>
+          <p class="muted" data-i18n="push_note">Web push (VAPID) is enabled on the server, so in-app notifications can also reach a rider's or driver's browser. The public key is only available to a logged-in user session — it is not shown here, and admin sessions cannot subscribe.</p>
         </div>
       </section>
 
@@ -360,6 +369,15 @@
           <button id="audit-export-btn" type="button" data-i18n="audit_export_csv">Download CSV</button>
         </div>
         <div class="card"><div id="audit-out"><p class="loading" data-i18n="loading">Loading…</p></div></div>
+      </section>
+
+      <!-- CLIENT ERRORS (v2.3 §2.11) -->
+      <section class="dash-section hidden" id="sec-client-errors">
+        <div class="section-head">
+          <h2 data-i18n="client_errors_title">Client Errors</h2>
+          <button type="button" data-refresh="client-errors" data-i18n="refresh">Refresh</button>
+        </div>
+        <div class="card"><div id="client-errors-out"><p class="loading" data-i18n="loading">Loading…</p></div></div>
       </section>
 
       <!-- SECURITY -->
@@ -393,6 +411,6 @@
 </div>
 
 <div id="toasts" aria-live="polite"></div>
-<script src="/admin.js?v=8"></script>
+<script src="/admin.js?v=9"></script>
 </body>
 </html>

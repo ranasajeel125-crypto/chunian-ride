@@ -10,6 +10,8 @@
 // the privacy fix (no rider phone in driver requests).
 // Usage: npm run smoke
 import { spawn } from "node:child_process";
+import https from "node:https";
+import { randomBytes, generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -21,7 +23,10 @@ if (fs.existsSync(dbFile + "-journal")) fs.unlinkSync(dbFile + "-journal");
 
 const PORT = 3456;
 const BASE = `http://127.0.0.1:${PORT}`;
-const env = { ...process.env, PORT: String(PORT), TURSO_DATABASE_URL: "file:./data/smoke.db" };
+// NODE_TLS_REJECT_UNAUTHORIZED=0: the server's web-push sender (web-push)
+// verifies TLS; the smoke test's fake push service uses a self-signed cert
+// (scripts/push-test-cert.pem, 127.0.0.1 only, test-only). Test process only.
+const env = { ...process.env, PORT: String(PORT), TURSO_DATABASE_URL: "file:./data/smoke.db", NODE_TLS_REJECT_UNAUTHORIZED: "0" };
 
 let child = null;
 let serverOut = "";
@@ -77,7 +82,7 @@ async function expectFail(label, fn, wantStatus) {
 }
 
 async function waitForHealth() {
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 120; i++) {
     try { await call("/api/health"); return; } catch { await sleep(500); }
   }
   throw new Error("server did not start:\n" + serverOut);
@@ -317,6 +322,12 @@ async function main() {
   const fare2 = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Pattoki", vehicle: "car" }) });
   check("admin rate change applies immediately (car 80/km -> Rs 1120)", fare2.suggested_fare === 1120, `got Rs ${fare2.suggested_fare}`);
   await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ rate_car_per_km: 70 }), session: "admin" });
+  // v2.3 (integration): owner_name is editable from admin settings now.
+  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ owner_name: "Chunian Ride Test" }), session: "admin" });
+  const settingsAfterOwner = await call("/api/settings");
+  check("admin owner_name change persists", settingsAfterOwner.settings.owner_name === "Chunian Ride Test", `got ${settingsAfterOwner.settings.owner_name}`);
+  await expectFail("admin owner_name empty is rejected (400)", () => call("/api/admin/settings", { method: "POST", body: JSON.stringify({ owner_name: "   " }), session: "admin" }), 400);
+  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ owner_name: "Chunian Ride" }), session: "admin" });
 
   const report = await call("/api/admin/reports?days=7", { session: "admin" });
   check("7-day report counts the completed ride", report.rides >= 1 && report.platform_revenue >= 134, `rides=${report.rides}, revenue=Rs ${report.platform_revenue}`);
@@ -432,7 +443,7 @@ async function main() {
     rateChild.stderr.on("data", (d) => (rateOut += d));
     const rateBase = "http://127.0.0.1:3457";
     try {
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 120; i++) {
         try { const r = await fetch(rateBase + "/api/health"); if (r.ok) break; } catch {}
         await sleep(500);
       }
@@ -519,7 +530,7 @@ async function main() {
 
   // ================= v2.2 =================
   const health21 = await call("/api/health");
-  check("version is 2.2.0", health21.version === "2.2.0", `got ${health21.version}`);
+  check("version is 2.3.0", health21.version === "2.3.0", `got ${health21.version}`);
 
   // ---- PWA ----
   const manifestRes = await fetch(BASE + "/manifest.json");
@@ -531,9 +542,9 @@ async function main() {
   check("icon 512 serves 200", (await fetch(BASE + "/icons/icon-512.png")).status === 200);
   const swRes = await fetch(BASE + "/sw.js");
   const swText = await swRes.text();
-  check("sw.js serves 200 with versioned cache chunian-ride-v2.2", swRes.status === 200 && swText.includes("chunian-ride-v2.2"));
+  check("sw.js serves 200 with versioned cache chunian-ride-v2.3.0", swRes.status === 200 && swText.includes("chunian-ride-v2.3.0"));
   const landing21 = await (await fetch(BASE + "/")).text();
-  check("landing footer says v2.2 + links manifest", landing21.includes("Chunian Ride v2.2") && landing21.includes("/manifest.json"));
+  check("landing footer says v2.3 + links manifest", landing21.includes("Chunian Ride v2.3") && landing21.includes("/manifest.json"));
   const riderPage21 = await (await fetch(BASE + "/rider")).text();
   check("rider page has promo input + notification bell + rider top-up card", riderPage21.includes("promo-code") && riderPage21.includes("notif-bell") && riderPage21.includes("rider-topup-amount"));
   const driverPage21 = await (await fetch(BASE + "/driver")).text();
@@ -906,6 +917,361 @@ async function main() {
   // ---- Admin page carries the pilot section + audit filters ----
   const adminPagePilot = await (await fetch(BASE + "/admin")).text();
   check("admin page has pilot section + whitelist + audit filters", adminPagePilot.includes("sec-pilot") && adminPagePilot.includes("pilot-whitelist-out") && adminPagePilot.includes("audit-filter-action"));
+
+  // ================= v2.3 =================
+  // All v2.3 tests run on the pilot accounts (pilot mode is ON, bike,
+  // Chunian City -> Chunian City) so nothing after them depends on state.
+  const health23 = await call("/api/health");
+  check("v2.3 health version is 2.3.0", health23.version === "2.3.0", `got ${health23.version}`);
+  // Valid Web Push subscription keys for the subscribe tests: web-push
+  // rejects anything else at send time (p256dh must be a 65-byte P-256
+  // point, auth 16 bytes) — a made-up key string never reaches the wire.
+  const { publicKey: testEcdhPub } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const testP256dh = Buffer.from(testEcdhPub.export({ type: "spki", format: "der" })).subarray(-65).toString("base64url");
+  const testAuth = randomBytes(16).toString("base64url");
+  const settings23 = await call("/api/settings");
+  check("vapid_private_key is NOT exposed via /api/settings", !("vapid_private_key" in settings23.settings) && typeof settings23.settings.vapid_public_key === "string", `public key len=${String(settings23.settings.vapid_public_key || "").length}`);
+
+  // ---- D-1 driver accept (happy path + second-accept + wrong-driver) ----
+  const daRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: pilotRider.id, pickup: "Chunian City", destination: "Chunian City", vehicle: "bike", distance_km: 3, proposed_fare: 50 }), session: "pilotRider" });
+  check("v2.3 ride booked for driver-accept test", !!daRide.ride_id, `ride #${daRide.ride_id}`);
+  const daDetail = await call(`/api/rides/${daRide.ride_id}`, { session: "pilotRider" });
+  const daOffer = daDetail.offers.find((o) => o.driver_id === pilotDriver.id && o.status === "pending");
+  check("seeded offer carries expires_at = created_at + 240000 (4 min TTL)", !!daOffer && daOffer.expires_at === daOffer.created_at + 240000, JSON.stringify(daOffer));
+  check("ride detail returns server_time_ms", typeof daDetail.server_time_ms === "number", `server_time_ms=${daDetail.server_time_ms}`);
+  const pdNotifs = await call("/api/notifications", { session: "pilotDriver" });
+  const nrr = pdNotifs.notifications.filter((n) => n.type === "new_ride_request" && n.ride_id === daRide.ride_id);
+  check("new_ride_request notification created once for the driver", nrr.length === 1, `got ${nrr.length}`);
+  check("new_ride_request params carry pickup/destination/vehicle/proposed fare", !!nrr[0] && nrr[0].params.pickup === "Chunian City" && nrr[0].params.destination === "Chunian City" && nrr[0].params.vehicle_type === "bike" && nrr[0].params.proposed_fare === 50 && nrr[0].params.ride_id === daRide.ride_id, JSON.stringify(nrr[0] && nrr[0].params));
+  await call(`/api/rides/${daRide.ride_id}`, { session: "pilotDriver" });
+  await call(`/api/drivers/${pilotDriver.id}/requests`, { session: "pilotDriver" });
+  const pdNotifs2 = await call("/api/notifications", { session: "pilotDriver" });
+  check("re-reading the ride does not re-notify (still exactly 1)", pdNotifs2.notifications.filter((n) => n.type === "new_ride_request" && n.ride_id === daRide.ride_id).length === 1);
+  const daAccepted = await call(`/api/rides/${daRide.ride_id}/offers/${daOffer.id}/accept-driver`, { method: "POST", body: "{}", session: "pilotDriver" });
+  check("driver accepts own offer, ride accepted at Rs 50", daAccepted.agreed_fare === 50 && daAccepted.driver_id === pilotDriver.id && daAccepted.accepted_by === "driver", JSON.stringify(daAccepted));
+  await expectFail("second accept of the same offer (rider path) -> 400", () => call(`/api/rides/${daRide.ride_id}/offers/${daOffer.id}/accept`, { method: "POST", body: "{}", session: "pilotRider" }), 400);
+  await expectFail("driver re-accept of the same offer -> 400", () => call(`/api/rides/${daRide.ride_id}/offers/${daOffer.id}/accept-driver`, { method: "POST", body: "{}", session: "pilotDriver" }), 400);
+  const prNotifs = await call("/api/notifications", { session: "pilotRider" });
+  check("rider notified ride_accepted after driver-accept", prNotifs.notifications.some((n) => n.type === "ride_accepted" && n.ride_id === daRide.ride_id));
+  const daDetail2 = await call(`/api/rides/${daRide.ride_id}`, { session: "pilotRider" });
+  check("other pending offers auto-declined on driver-accept", daDetail2.offers.filter((o) => o.driver_id !== pilotDriver.id).every((o) => o.status === "declined"), JSON.stringify(daDetail2.offers.map((o) => o.status)));
+
+  // Driver cannot accept ANOTHER driver's offer.
+  const daRide2 = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: pilotRider.id, pickup: "Chunian City", destination: "Chunian City", vehicle: "bike", distance_km: 3, proposed_fare: 50 }), session: "pilotRider" });
+  const daDetail3 = await call(`/api/rides/${daRide2.ride_id}`, { session: "pilotRider" });
+  const ahmedOffer = daDetail3.offers.find((o) => o.driver_id !== pilotDriver.id && o.status === "pending");
+  check("second ride has another driver's seeded offer", !!ahmedOffer, JSON.stringify(daDetail3.offers.map((o) => o.driver_id)));
+  if (ahmedOffer) {
+    await expectFail("driver cannot accept another driver's offer -> 403", () => call(`/api/rides/${daRide2.ride_id}/offers/${ahmedOffer.id}/accept-driver`, { method: "POST", body: "{}", session: "pilotDriver" }), 403);
+    await expectFail("rider (non-driver role) cannot use accept-driver -> 403", () => call(`/api/rides/${daRide2.ride_id}/offers/${ahmedOffer.id}/accept-driver`, { method: "POST", body: "{}", session: "pilotRider" }), 403);
+  }
+
+  // ---- Real pickup distance ----
+  await call(`/api/drivers/${pilotDriver.id}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 74.03 }), session: "pilotDriver" });
+  const reqs23 = await call(`/api/drivers/${pilotDriver.id}/requests`, { session: "pilotDriver" });
+  const reqRide = reqs23.requests.find((r) => r.id === daRide2.ride_id);
+  check("driver requests carry pickup_distance_km + eta + server_time_ms", !!reqRide && typeof reqRide.pickup_distance_km === "number" && reqRide.pickup_eta_min >= 1 && typeof reqs23.server_time_ms === "number", JSON.stringify(reqRide));
+  check("place pickup + live driver GPS: distance ~0.48 km, eta 1 min, estimated=true", !!reqRide && reqRide.pickup_distance_km > 0.3 && reqRide.pickup_distance_km < 0.7 && reqRide.pickup_eta_min === 1 && reqRide.pickup_distance_estimated === true, JSON.stringify(reqRide));
+  const detDriver = await call(`/api/rides/${daRide2.ride_id}`, { session: "pilotDriver" });
+  check("ride detail carries pickup distance for the browsing driver", typeof detDriver.pickup_distance_km === "number" && detDriver.pickup_eta_min === 1, JSON.stringify({ km: detDriver.pickup_distance_km, eta: detDriver.pickup_eta_min }));
+  const gpsRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: pilotRider.id, pickup: "Current location", destination: "Chunian City", vehicle: "bike", distance_km: 3, proposed_fare: 50, pickup_lat: 30.98, pickup_lng: 74.05 }), session: "pilotRider" });
+  check("ride booked with GPS pickup coords", !!gpsRide.ride_id, `ride #${gpsRide.ride_id}`);
+  const gpsDetail = await call(`/api/rides/${gpsRide.ride_id}`, { session: "pilotDriver" });
+  check("GPS pickup coords stored + used for distance (estimated=false)", gpsDetail.ride.pickup_lat === 30.98 && gpsDetail.ride.pickup_lng === 74.05 && gpsDetail.pickup_distance_estimated === false && typeof gpsDetail.pickup_distance_km === "number" && gpsDetail.pickup_distance_km > 1, JSON.stringify({ lat: gpsDetail.ride.pickup_lat, km: gpsDetail.pickup_distance_km, est: gpsDetail.pickup_distance_estimated }));
+  await call(`/api/rides/${gpsRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "pilotRider" });
+  await call(`/api/rides/${daRide2.ride_id}/cancel`, { method: "POST", body: "{}", session: "pilotRider" });
+
+  // ---- WebRTC call signalling (on the driver-accepted ride) ----
+  const sig = await call(`/api/rides/${daRide.ride_id}/call-signal`, { method: "POST", body: JSON.stringify({ kind: "offer", payload: { sdp: "smoke-sdp" } }), session: "pilotRider" });
+  check("rider posts call signal (offer)", !!sig.signal_id, `id=${sig.signal_id}`);
+  const sigs = await call(`/api/rides/${daRide.ride_id}/call-signal?after=0`, { session: "pilotDriver" });
+  check("driver polls call signals, sees rider offer with payload", sigs.signals.some((s) => s.id === sig.signal_id && s.kind === "offer" && s.payload.sdp === "smoke-sdp"), JSON.stringify(sigs.signals));
+  const sigsAfter = await call(`/api/rides/${daRide.ride_id}/call-signal?after=${sig.signal_id}`, { session: "pilotDriver" });
+  check("call-signal ?after filters to newer signals only", sigsAfter.signals.length === 0, `got ${sigsAfter.signals.length}`);
+  const sigAns = await call(`/api/rides/${daRide.ride_id}/call-signal`, { method: "POST", body: JSON.stringify({ kind: "answer", payload: { sdp: "smoke-answer" } }), session: "pilotDriver" });
+  check("driver posts call signal (answer)", !!sigAns.signal_id);
+  const sigsRider = await call(`/api/rides/${daRide.ride_id}/call-signal?after=${sig.signal_id}`, { session: "pilotRider" });
+  check("rider polls and sees the driver answer", sigsRider.signals.some((s) => s.kind === "answer" && s.payload.sdp === "smoke-answer"));
+  await expectFail("non-participant cannot post call signal -> 403", () => call(`/api/rides/${daRide.ride_id}/call-signal`, { method: "POST", body: JSON.stringify({ kind: "offer", payload: {} }), session: "rider" }), 403);
+  await expectFail("non-participant cannot poll call signals -> 403", () => call(`/api/rides/${daRide.ride_id}/call-signal?after=0`, { session: "rider" }), 403);
+  await expectFail("bad call-signal kind -> 400", () => call(`/api/rides/${daRide.ride_id}/call-signal`, { method: "POST", body: JSON.stringify({ kind: "bogus", payload: {} }), session: "pilotRider" }), 400);
+  await expectFail("call signal on requested (not active) ride -> 403", () => call(`/api/rides/${daRide2.ride_id}/call-signal`, { method: "POST", body: JSON.stringify({ kind: "offer", payload: {} }), session: "pilotRider" }), 403);
+
+  // ---- Chat v2.3: ?after/&limit + unread count (on the active ride) ----
+  const chat23a = await call(`/api/rides/${daRide.ride_id}/messages`, { method: "POST", body: JSON.stringify({ sender_id: pilotRider.id, sender_role: "rider", message: "v23 chat test" }), session: "pilotRider" });
+  check("v2.3 chat post on active ride", !!chat23a.message_id, `id=${chat23a.message_id}`);
+  const chat23driver = await call(`/api/rides/${daRide.ride_id}/messages?after=0&limit=50`, { session: "pilotDriver" });
+  check("chat GET returns unread_count=1 for the driver", chat23driver.unread_count === 1 && chat23driver.messages.some((m) => m.message === "v23 chat test"), JSON.stringify(chat23driver));
+  const chat23driver2 = await call(`/api/rides/${daRide.ride_id}/messages`, { session: "pilotDriver" });
+  check("second chat fetch marks read (unread_count=0)", chat23driver2.unread_count === 0, `got ${chat23driver2.unread_count}`);
+  const chat23after = await call(`/api/rides/${daRide.ride_id}/messages?after=${chat23a.message_id}`, { session: "pilotDriver" });
+  check("chat ?after filters to newer messages only", chat23after.messages.length === 0, `got ${chat23after.messages.length}`);
+  await expectFail("chat message over 500 chars -> 400", () => call(`/api/rides/${daRide.ride_id}/messages`, { method: "POST", body: JSON.stringify({ sender_id: pilotRider.id, sender_role: "rider", message: "x".repeat(501) }), session: "pilotRider" }), 400);
+
+  // ---- Live location + navigation E2E (v2.3, simulated GPS) ----
+  // Independent haversine (same formula as the server) to verify the
+  // server's numbers instead of trusting them.
+  function haversineKmTest(a, b) {
+    const R = 6371;
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+    const la1 = (a.lat * Math.PI) / 180;
+    const la2 = (b.lat * Math.PI) / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  // Navigation data the rider client needs (public/rider.js showTrip):
+  // ride pickup/destination names resolvable via /api/places, driver_location
+  // with lat/lng/updated_at, and status accepted/ongoing.
+  const places23 = await call("/api/places");
+  const destCity = places23.places.find((p) => p.name === "Chunian City");
+  check("places API returns destination coordinates for navigation", !!destCity && destCity.lat === 30.9667 && destCity.lng === 74.0333, JSON.stringify(destCity));
+  const navRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: pilotRider.id, pickup: "Current location", destination: "Chunian City", vehicle: "bike", distance_km: 3, proposed_fare: 50, pickup_lat: 30.98, pickup_lng: 74.05 }), session: "pilotRider" });
+  check("navigation ride booked with GPS pickup", !!navRide.ride_id, `ride #${navRide.ride_id}`);
+  const navDetail = await call(`/api/rides/${navRide.ride_id}`, { session: "pilotRider" });
+  check("navigation data present: GPS pickup + destination coords + status requested", navDetail.ride.pickup_lat === 30.98 && navDetail.ride.pickup_lng === 74.05 && navDetail.ride.status === "requested" && destCity.lat === 30.9667 && destCity.lng === 74.0333, JSON.stringify({ pickup: [navDetail.ride.pickup_lat, navDetail.ride.pickup_lng], dest: [destCity.lat, destCity.lng] }));
+  // Counter-offer carries the same 4-minute expiry as seeded offers, and
+  // the rider gets an offer_received notification for it.
+  const navCounter = await call(`/api/rides/${navRide.ride_id}/counter`, { method: "POST", body: JSON.stringify({ driver_id: pilotDriver.id, fare: 55 }), session: "pilotDriver" });
+  check("counter-offer created on navigation ride", !!navCounter.offer_id, `offer #${navCounter.offer_id}`);
+  const navDetail2 = await call(`/api/rides/${navRide.ride_id}`, { session: "pilotDriver" });
+  const navCounterOffer = navDetail2.offers.find((o) => o.id === navCounter.offer_id);
+  check("counter-offer carries expires_at = created_at + 240000", !!navCounterOffer && navCounterOffer.expires_at === navCounterOffer.created_at + 240000, JSON.stringify(navCounterOffer));
+  const prNotifsNav = await call("/api/notifications", { session: "pilotRider" });
+  check("rider gets offer_received for the counter-offer", prNotifsNav.notifications.some((n) => n.type === "offer_received" && n.ride_id === navRide.ride_id && n.params.fare === 55));
+  // Driver moves: far (Pattoki) -> near (Chunian). Distance must track the
+  // move and match an independent haversine computation.
+  await call(`/api/drivers/${pilotDriver.id}/location`, { method: "POST", body: JSON.stringify({ lat: 31.0247, lng: 73.8528 }), session: "pilotDriver" });
+  const reqsFar = await call(`/api/drivers/${pilotDriver.id}/requests`, { session: "pilotDriver" });
+  const farRide = reqsFar.requests.find((r) => r.id === navRide.ride_id);
+  const expectedFar = haversineKmTest({ lat: 31.0247, lng: 73.8528 }, { lat: 30.98, lng: 74.05 });
+  check("driver far from GPS pickup: distance matches independent haversine", !!farRide && Math.abs(farRide.pickup_distance_km - Math.round(expectedFar * 100) / 100) < 0.01 && farRide.pickup_distance_km > 10, JSON.stringify({ got: farRide && farRide.pickup_distance_km, expected: Math.round(expectedFar * 100) / 100 }));
+  check("far driver ETA follows 25 km/h formula", !!farRide && farRide.pickup_eta_min === Math.max(1, Math.round((farRide.pickup_distance_km / 25) * 60)), `eta=${farRide && farRide.pickup_eta_min}`);
+  await call(`/api/drivers/${pilotDriver.id}/location`, { method: "POST", body: JSON.stringify({ lat: 30.97, lng: 74.03 }), session: "pilotDriver" });
+  const reqsNear = await call(`/api/drivers/${pilotDriver.id}/requests`, { session: "pilotDriver" });
+  const nearRide = reqsNear.requests.find((r) => r.id === navRide.ride_id);
+  const expectedNear = haversineKmTest({ lat: 30.97, lng: 74.03 }, { lat: 30.98, lng: 74.05 });
+  check("driver moves closer: distance DROPS and matches haversine", !!nearRide && !!farRide && nearRide.pickup_distance_km < farRide.pickup_distance_km && Math.abs(nearRide.pickup_distance_km - Math.round(expectedNear * 100) / 100) < 0.01, JSON.stringify({ far: farRide.pickup_distance_km, near: nearRide.pickup_distance_km, expectedNear: Math.round(expectedNear * 100) / 100 }));
+  await call(`/api/rides/${navRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "pilotRider" });
+
+  // Accept race: rider-accept and driver-accept fired at the same time on
+  // the same ride — exactly one must win, the other must fail 400.
+  const raceRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: pilotRider.id, pickup: "Chunian City", destination: "Chunian City", vehicle: "bike", distance_km: 3, proposed_fare: 50 }), session: "pilotRider" });
+  const raceDetail = await call(`/api/rides/${raceRide.ride_id}`, { session: "pilotRider" });
+  const raceDriverOffer = raceDetail.offers.find((o) => o.driver_id === pilotDriver.id && o.status === "pending");
+  const raceOtherOffer = raceDetail.offers.find((o) => o.driver_id !== pilotDriver.id && o.status === "pending");
+  check("race ride has two pending offers (one per driver)", !!raceDriverOffer && !!raceOtherOffer, JSON.stringify(raceDetail.offers.map((o) => o.driver_id)));
+  const [raceA, raceB] = await Promise.all([
+    callRaw(`/api/rides/${raceRide.ride_id}/offers/${raceOtherOffer.id}/accept`, { method: "POST", body: "{}", session: "pilotRider" }),
+    callRaw(`/api/rides/${raceRide.ride_id}/offers/${raceDriverOffer.id}/accept-driver`, { method: "POST", body: "{}", session: "pilotDriver" }),
+  ]);
+  const raceStatuses = [raceA.status, raceB.status].sort();
+  check("accept race: exactly one accept wins (200), the other fails (400)", raceStatuses[0] === 200 && raceStatuses[1] === 400, `statuses=${raceA.status},${raceB.status}`);
+  const raceDetail2 = await call(`/api/rides/${raceRide.ride_id}`, { session: "pilotRider" });
+  check("accept race: ride accepted exactly once, one offer accepted", raceDetail2.ride.status === "accepted" && raceDetail2.offers.filter((o) => o.status === "accepted").length === 1 && raceDetail2.offers.filter((o) => o.status === "declined").length === 1, JSON.stringify({ status: raceDetail2.ride.status, offers: raceDetail2.offers.map((o) => o.status) }));
+  await call(`/api/rides/${raceRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "pilotRider" });
+
+  // Live driver_location on the accepted ride (daRide), then the full
+  // status chain accepted -> ongoing -> completed with fresh fixes.
+  // rider.js treats a fix as fresh iff updated_at is <180s old.
+  await call(`/api/drivers/${pilotDriver.id}/location`, { method: "POST", body: JSON.stringify({ lat: 30.975, lng: 74.04 }), session: "pilotDriver" });
+  const detFresh = await call(`/api/rides/${daRide.ride_id}`, { session: "pilotRider" });
+  check("rider sees fresh driver_location on accepted ride", detFresh.driver_location && detFresh.driver_location.lat === 30.975 && detFresh.driver_location.lng === 74.04 && detFresh.ride.status === "accepted" && detFresh.ride.driver_id === pilotDriver.id, JSON.stringify(detFresh.driver_location));
+  check("driver_location updated_at is fresh (<180s old, rider.js rule)", detFresh.driver_location && detFresh.driver_location.updated_at != null && Date.now() - detFresh.driver_location.updated_at < 180000, `age=${detFresh.driver_location ? Date.now() - detFresh.driver_location.updated_at : "n/a"}ms`);
+  await call(`/api/rides/${daRide.ride_id}/start`, { method: "POST", body: "{}", session: "pilotDriver" });
+  await call(`/api/drivers/${pilotDriver.id}/location`, { method: "POST", body: JSON.stringify({ lat: 30.98, lng: 74.05 }), session: "pilotDriver" });
+  const detOngoing = await call(`/api/rides/${daRide.ride_id}`, { session: "pilotRider" });
+  check("ride transitions accepted -> ongoing", detOngoing.ride.status === "ongoing", `status=${detOngoing.ride.status}`);
+  check("driver_location tracks the move during ongoing ride (fresh)", detOngoing.driver_location && detOngoing.driver_location.lat === 30.98 && detOngoing.driver_location.lng === 74.05 && Date.now() - detOngoing.driver_location.updated_at < 180000, JSON.stringify(detOngoing.driver_location));
+  const daDone = await call(`/api/rides/${daRide.ride_id}/complete`, { method: "POST", body: JSON.stringify({ cash_received: true }), session: "pilotDriver" });
+  check("driver-accepted ride completes: fare 50, take 26, kept 24, wallet 448", daDone.platform_take === 26 && daDone.driver_kept === 24 && daDone.driver_wallet_balance === 448, JSON.stringify(daDone));
+  const detDone = await call(`/api/rides/${daRide.ride_id}`, { session: "pilotRider" });
+  check("ride transitions ongoing -> completed", detDone.ride.status === "completed", `status=${detDone.ride.status}`);
+
+  // Stale-location case: a driver who never posted GPS has updated_at null,
+  // so rider.js must treat the fix as NOT fresh (driver_loc_missing).
+  const adminRides23 = await call("/api/admin/rides", { session: "admin" });
+  const seededAhmed = adminRides23.rides.find((r) => r.driver_name === "Ahmed Raza" && r.status === "completed");
+  check("seeded Ahmed Raza completed ride exists for the stale test", !!seededAhmed, `ride #${seededAhmed && seededAhmed.id}`);
+  if (seededAhmed) {
+    const staleDet = await call(`/api/rides/${seededAhmed.id}`, { session: "admin" });
+    check("driver who never posted GPS: driver_location.updated_at is null (stale)", staleDet.driver_location && staleDet.driver_location.updated_at == null, JSON.stringify(staleDet.driver_location));
+  }
+
+  // Admin chat is read-only: can read, cannot post.
+  const chatAdmin = await call(`/api/rides/${daRide.ride_id}/messages`, { session: "admin" });
+  check("admin can read ride chat (read-only)", chatAdmin.messages.length >= 1 && chatAdmin.unread_count === 0, `messages=${chatAdmin.messages.length}`);
+  await expectFail("admin cannot post to ride chat -> 403", () => call(`/api/rides/${daRide.ride_id}/messages`, { method: "POST", body: JSON.stringify({ sender_id: 1, sender_role: "rider", message: "admin hi" }), session: "admin" }), 403);
+
+  // ---- Web push end-to-end (local fake push service, HTTPS) ----
+  // A tiny local HTTPS server plays the push service: it records the
+  // payload and answers 410 Gone, which must delete the subscription.
+  // HTTPS is required because web-push always sends over TLS (an http://
+  // endpoint fails with an SSL error before any byte is sent). The server
+  // trusts the self-signed test cert via NODE_TLS_REJECT_UNAUTHORIZED=0
+  // (see env above); the cert is test-only, 127.0.0.1 only.
+  {
+    const pushHits = [];
+    const pushServer = https.createServer(
+      { key: fs.readFileSync(path.join(root, "scripts", "push-test-key.pem")), cert: fs.readFileSync(path.join(root, "scripts", "push-test-cert.pem")) },
+      (req, res) => {
+        // Web Push payloads are ENCRYPTED (RFC 8291 aes128gcm): the service
+        // only ever sees ciphertext + headers, never the plaintext JSON.
+        // With aes128gcm the salt/key travel IN the body (16B salt + 4B
+        // record size + 1B key length + 65B sender key + ciphertext) and
+        // there are no Encryption/Crypto-Key headers (those belong to the
+        // older aesgcm encoding). Record the shape, not the plaintext.
+        const chunks = [];
+        req.on("data", (c) => chunks.push(c));
+        req.on("end", () => { const buf = Buffer.concat(chunks); pushHits.push({ url: req.url, headers: req.headers, bodyLen: buf.length, bodyB64: buf.toString("base64") }); res.writeHead(410); res.end(); });
+      }
+    );
+    await new Promise((resolve) => pushServer.listen(3459, "127.0.0.1", resolve));
+    try {
+      const localSub = await call("/api/push/subscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://127.0.0.1:3459/push/v23", keys: { p256dh: testP256dh, auth: testAuth } }), session: "pilotRider" });
+      check("push subscribe accepts https://127.0.0.1 (local test endpoint)", localSub.ok === true, JSON.stringify(localSub));
+      // Trigger a real notification for the rider: a counter-offer on a
+      // fresh ride notifies the rider (offer_received) -> notify() fires
+      // a web push to the local fake service.
+      const pushRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: pilotRider.id, pickup: "Chunian City", destination: "Chunian City", vehicle: "bike", distance_km: 3, proposed_fare: 50 }), session: "pilotRider" });
+      await call(`/api/rides/${pushRide.ride_id}/counter`, { method: "POST", body: JSON.stringify({ driver_id: pilotDriver.id, fare: 55 }), session: "pilotDriver" });
+      await sleep(2500);
+      check("fake push service received the notification push", pushHits.length >= 1, `hits=${pushHits.length}`);
+      const hit0 = pushHits[0] || {};
+      const hitHeaders = hit0.headers || {};
+      // RFC 8291 aes128gcm body layout: [0..15] salt, [16..19] record size,
+      // [20] sender-key length (65), [21..85] sender key, [86..] ciphertext.
+      const hitBuf = hit0.bodyB64 ? Buffer.from(hit0.bodyB64, "base64") : null;
+      check("push request is a real encrypted Web Push message (aes128gcm + RFC 8291 body layout)", !!hitBuf && hitBuf.length > 86 && String(hitHeaders["content-encoding"] || "") === "aes128gcm" && hitBuf[20] === 65, JSON.stringify({ encoding: hitHeaders["content-encoding"], bodyLen: hitBuf && hitBuf.length, keyLenByte: hitBuf && hitBuf[20] }));
+      await call(`/api/rides/${pushRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "pilotRider" });
+      const unsubLocal = await call("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://127.0.0.1:3459/push/v23" }), session: "pilotRider" });
+      check("410 from the push service deleted the subscription (unsubscribe removes 0)", unsubLocal.ok === true && unsubLocal.removed === 0, JSON.stringify(unsubLocal));
+    } finally {
+      await new Promise((resolve) => pushServer.close(resolve));
+    }
+  }
+
+  // ---- Web push (VAPID) ----
+  const pubKey = await call("/api/push/public-key", { session: "pilotRider" });
+  check("push public key returned (VAPID, base64url, 87 chars)", typeof pubKey.public_key === "string" && pubKey.public_key.length === 87, `len=${pubKey.public_key && pubKey.public_key.length}`);
+  await expectFail("push subscribe without endpoint -> 400", () => call("/api/push/subscribe", { method: "POST", body: JSON.stringify({ keys: { p256dh: "x", auth: "y" } }), session: "pilotRider" }), 400);
+  await expectFail("push subscribe with garbage keys -> 400", () => call("/api/push/subscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://example.com/push/bad", keys: { p256dh: "not-a-key", auth: "short" } }), session: "pilotRider" }), 400);
+  const sub = await call("/api/push/subscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://example.com/push/smoke-v23", keys: { p256dh: testP256dh, auth: testAuth } }), session: "pilotRider" });
+  check("push subscribe upserts", sub.ok === true && sub.subscribed === true, JSON.stringify(sub));
+  const subAgain = await call("/api/push/subscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://example.com/push/smoke-v23", keys: { p256dh: testP256dh, auth: testAuth } }), session: "pilotRider" });
+  check("push re-subscribe same endpoint is idempotent", subAgain.ok === true, JSON.stringify(subAgain));
+  const unsub = await call("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://example.com/push/smoke-v23" }), session: "pilotRider" });
+  check("push unsubscribe removes the subscription", unsub.ok === true && unsub.removed === 1, JSON.stringify(unsub));
+  await expectFail("unauthenticated push public-key -> 401", () => call("/api/push/public-key"), 401);
+  await expectFail("admin session cannot subscribe for push -> 403", () => call("/api/push/subscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://example.com/push/x", keys: { p256dh: "x", auth: "y" } }), session: "admin" }), 403);
+
+  // ---- Scheduled-ride reminder (ride due in 20 min, lazy sweep on read) ----
+  const remRide = await call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: pilotRider.id, pickup: "Chunian City", destination: "Chunian City", vehicle: "bike", distance_km: 3, proposed_fare: 50, scheduled_for: Date.now() + 20 * 60000 }), session: "pilotRider" });
+  check("scheduled ride within 30 min booked", !!remRide.ride_id, `ride #${remRide.ride_id}`);
+  await call(`/api/rides/${remRide.ride_id}`, { session: "pilotRider" });
+  const remNotifs = await call("/api/notifications", { session: "pilotRider" });
+  check("scheduled_ride_reminder sent once for ride due in 20 min", remNotifs.notifications.filter((n) => n.type === "scheduled_ride_reminder" && n.ride_id === remRide.ride_id).length === 1, remNotifs.notifications.map((n) => n.type).join(","));
+  await call(`/api/rides/${remRide.ride_id}`, { session: "pilotRider" });
+  const remNotifs2 = await call("/api/notifications", { session: "pilotRider" });
+  check("reminder not duplicated on re-read", remNotifs2.notifications.filter((n) => n.type === "scheduled_ride_reminder" && n.ride_id === remRide.ride_id).length === 1);
+  await call(`/api/rides/${remRide.ride_id}/cancel`, { method: "POST", body: "{}", session: "pilotRider" });
+
+  // ---- Document expiry ----
+  const expUp = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "licence", mime: "image/jpeg", data_url: tinyJpeg, expires_at: Date.now() + 60000 }), session: "pilotDriver" });
+  check("document upload accepts a future expires_at", expUp.status === "pending" && !!expUp.document_id, JSON.stringify(expUp));
+  await expectFail("document upload with a past expires_at -> 400", () => call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "licence", mime: "image/jpeg", data_url: tinyJpeg, expires_at: Date.now() - 1000 }), session: "pilotDriver" }), 400);
+  const expAdminDocs = await call(`/api/admin/drivers/${pilotDriver.id}/documents`, { session: "admin" });
+  const expDoc = expAdminDocs.documents.find((d) => d.id === expUp.document_id);
+  check("admin document list shows expires_at + expires_soon=true + expired=false", !!expDoc && expDoc.expires_at != null && expDoc.expires_soon === true && expDoc.expired === false, JSON.stringify(expDoc));
+  await call(`/api/admin/documents/${expUp.document_id}/approve`, { method: "POST", body: "{}", session: "admin" });
+  const expUp2 = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "licence", mime: "image/jpeg", data_url: tinyJpeg, expires_at: Date.now() + 2000 }), session: "pilotDriver" });
+  await call(`/api/admin/documents/${expUp2.document_id}/approve`, { method: "POST", body: "{}", session: "admin" });
+  await sleep(3000);
+  const expDocs2 = await call("/api/drivers/me/documents", { session: "pilotDriver" });
+  check("expired document blocks the checklist (licence no longer counts)", expDocs2.doc_checklist.all === false && expDocs2.doc_checklist.missing.includes("licence"), JSON.stringify(expDocs2.doc_checklist));
+  const expOnline = await callRaw(`/api/drivers/${pilotDriver.id}/online`, { method: "POST", body: JSON.stringify({ online: true }), session: "pilotDriver" });
+  check("driver with an expired document cannot go online -> 403", expOnline.status === 403, `got ${expOnline.status}`);
+  const expAdminDocs2 = await call(`/api/admin/drivers/${pilotDriver.id}/documents`, { session: "admin" });
+  const expDoc2 = expAdminDocs2.documents.find((d) => d.id === expUp2.document_id);
+  check("admin document list flags the expired document", !!expDoc2 && expDoc2.expired === true, JSON.stringify(expDoc2));
+  // Approving a document that expired while pending must fail.
+  const expUp3 = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "licence", mime: "image/jpeg", data_url: tinyJpeg, expires_at: Date.now() + 2000 }), session: "pilotDriver" });
+  await sleep(3000);
+  await expectFail("approving an already-expired document -> 400", () => call(`/api/admin/documents/${expUp3.document_id}/approve`, { method: "POST", body: "{}", session: "admin" }), 400);
+
+  // ---- Client error logging ----
+  const ce = await callRaw("/api/client-error", { method: "POST", body: JSON.stringify({ message: "smoke client error", stack: "Error: smoke\n at test", url: "/rider", user_agent: "smoke-agent" }), session: "pilotRider" });
+  check("client error posted -> 201", ce.status === 201 && ce.data.ok === true, `got ${ce.status}`);
+  const ceList = await call("/api/admin/client-errors", { session: "admin" });
+  check("admin lists client errors (latest first)", ceList.client_errors.some((e) => e.message === "smoke client error" && e.url === "/rider"), `total=${ceList.client_errors.length}`);
+  const ceLong = await callRaw("/api/client-error", { method: "POST", body: JSON.stringify({ message: "y".repeat(2500), stack: "z".repeat(5000) }), session: "pilotRider" });
+  check("over-long client error is truncated, not rejected -> 201", ceLong.status === 201, `got ${ceLong.status}`);
+  const ceList2 = await call("/api/admin/client-errors", { session: "admin" });
+  const ceLongRow = ceList2.client_errors.find((e) => e.message === "y".repeat(2000));
+  check("stored client error message truncated to 2000 chars, stack to 4000", !!ceLongRow && ceLongRow.stack.length === 4000, `stack len=${ceLongRow && ceLongRow.stack.length}`);
+  await expectFail("rider cannot list client errors -> 403", () => call("/api/admin/client-errors", { session: "pilotRider" }), 403);
+  await expectFail("client error without message -> 400", () => call("/api/client-error", { method: "POST", body: JSON.stringify({ message: "" }), session: "pilotRider" }), 400);
+  await expectFail("unauthenticated client error -> 401", () => call("/api/client-error", { method: "POST", body: JSON.stringify({ message: "x" }) }), 401);
+
+  // ---- Offer expiry (separate fresh-DB server, port 3458, TTL 3s) ----
+  {
+    const expDb = path.join(dataDir, "smoke-v23.db");
+    if (fs.existsSync(expDb)) fs.unlinkSync(expDb);
+    const expEnv = { ...process.env, PORT: "3458", TURSO_DATABASE_URL: "file:./data/smoke-v23.db", OFFER_TTL_MS: "3000" };
+    const expChild = spawn("node", ["server/index.mjs"], { cwd: root, env: expEnv, stdio: ["ignore", "pipe", "pipe"] });
+    let expOut = "";
+    expChild.stdout.on("data", (d) => (expOut += d));
+    expChild.stderr.on("data", (d) => (expOut += d));
+    const expBase = "http://127.0.0.1:3458";
+    try {
+      for (let i = 0; i < 120; i++) {
+        try { const r = await fetch(expBase + "/api/health"); if (r.ok) break; } catch {}
+        await sleep(500);
+      }
+      const expToken = extractSetupToken(expOut);
+      check("expiry server generated its own setup token", typeof expToken === "string" && /^[0-9a-f]{64}$/.test(expToken || ""));
+      const expCall = async (p, opts = {}) => {
+        const headers = { "Content-Type": "application/json" };
+        if (opts.cookie) headers.Cookie = opts.cookie;
+        const res = await fetch(expBase + p, { headers, method: opts.method || "GET", body: opts.body });
+        const data = await res.json().catch(() => ({}));
+        return { status: res.status, data, setCookie: res.headers.getSetCookie() };
+      };
+      const expSetup = await expCall("/api/admin/setup", { method: "POST", body: JSON.stringify({ pin: expToken, name: "Owner", phone: "03266040350", password: "ownerpass" }) });
+      check("expiry server admin setup works", expSetup.status === 200, `got ${expSetup.status}`);
+      const expAdminCookie = expSetup.setCookie && expSetup.setCookie[0].split(";")[0];
+      await expCall("/api/admin/settings", { method: "POST", body: JSON.stringify({ pilot_mode: "0", pilot_chunian_only: "0" }), cookie: expAdminCookie });
+      const expRider = await expCall("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "Exp Rider", phone: "0309-1212121", password: "expriderpass", role: "rider" }) });
+      check("expiry server rider signs up", expRider.status === 200 && !!expRider.data.user.id, `got ${expRider.status}`);
+      const expRiderCookie = expRider.setCookie[0].split(";")[0];
+      const expRiderId = expRider.data.user.id;
+      const expDriver = await expCall("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0301-0000003", password: "expdriverpass" }) });
+      check("expiry server demo driver logs in (claims account)", expDriver.status === 200 && expDriver.data.claimed === true, `got ${expDriver.status}`);
+      const expDriverCookie = expDriver.setCookie[0].split(";")[0];
+      const expDriverId = expDriver.data.user.id;
+      const expRide = await expCall("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: expRiderId, pickup: "Chunian City", destination: "Pattoki", vehicle: "car", proposed_fare: 980 }), cookie: expRiderCookie });
+      check("expiry server ride booked", expRide.status === 200 && !!expRide.data.ride_id, JSON.stringify(expRide.data));
+      const expRideId = expRide.data.ride_id;
+      const expDetail = await expCall(`/api/rides/${expRideId}`, { cookie: expRiderCookie });
+      const expOffer = expDetail.data.offers.find((o) => o.driver_id === expDriverId && o.status === "pending");
+      check("expiry server offer has expires_at = created_at + 3000 (test TTL)", !!expOffer && expOffer.expires_at === expOffer.created_at + 3000, JSON.stringify(expOffer));
+      await sleep(4000);
+      const expAccept = await expCall(`/api/rides/${expRideId}/offers/${expOffer.id}/accept`, { method: "POST", body: "{}", cookie: expRiderCookie });
+      check("accepting an expired offer -> 400", expAccept.status === 400, `got ${expAccept.status}: ${JSON.stringify(expAccept.data)}`);
+      const expDriverAccept = await expCall(`/api/rides/${expRideId}/offers/${expOffer.id}/accept-driver`, { method: "POST", body: "{}", cookie: expDriverCookie });
+      check("driver-accepting an expired offer -> 400", expDriverAccept.status === 400, `got ${expDriverAccept.status}`);
+      const expDetail2 = await expCall(`/api/rides/${expRideId}`, { cookie: expRiderCookie });
+      const expOffer2 = expDetail2.data.offers.find((o) => o.id === expOffer.id);
+      check("expired offer reads back with status 'expired'", !!expOffer2 && expOffer2.status === "expired", JSON.stringify(expOffer2));
+      const expDecline = await expCall(`/api/rides/${expRideId}/decline`, { method: "POST", body: JSON.stringify({ driver_id: expDriverId }), cookie: expDriverCookie });
+      check("declining an expired offer -> 400", expDecline.status === 400, `got ${expDecline.status}`);
+    } finally {
+      expChild.kill();
+      await sleep(300);
+      if (fs.existsSync(expDb)) fs.unlinkSync(expDb);
+      if (fs.existsSync(expDb + "-journal")) fs.unlinkSync(expDb + "-journal");
+    }
+  }
 
   console.log(process.exitCode ? "\nSMOKE: FAILURES PRESENT" : "\nSMOKE: ALL CHECKS PASSED");
 }

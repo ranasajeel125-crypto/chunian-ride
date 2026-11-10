@@ -1,7 +1,11 @@
 // Chunian Ride — rider app (rider.html). Passenger only; no driver/admin code.
+// v2.3: GPS pickup coords on booking, offer countdowns from server time,
+// 5s live-tracking poll (freshness rule unchanged), 3s chat polling with
+// unread badge, WebRTC calls, complaint form, JazzCash/Sadapay picker,
+// support contact (phone + WhatsApp), push toggle, client-error reporting.
 const store = { rider: null };
 let places = [];
-let settings = { rate_bike_per_km: 15, rate_rickshaw_per_km: 25, rate_car_per_km: 70, rate_ac_car_per_km: 85, min_bike: 50, min_rickshaw: 100, min_car: 150, min_ac_car: 200, jazzcash_number: "03266040350", support_phone: "" };
+let settings = { rate_bike_per_km: 15, rate_rickshaw_per_km: 25, rate_car_per_km: 70, rate_ac_car_per_km: 85, min_bike: 50, min_rickshaw: 100, min_car: 150, min_ac_car: 200, jazzcash_number: "03266040350", sadapay_number: "", support_phone: "", support_whatsapp: "" };
 let vehicle = "bike";
 let currentRide = null;
 let fareEstimate = null;
@@ -10,6 +14,12 @@ let gpsPos = null;          // {lat, lng} from the rider's phone GPS
 let gpsDistanceKm = null;   // haversine km from GPS pickup to the destination place
 let chatTimer = null;
 let currentScreen = "home";
+let riderTopupPicker = null;
+let chatLastId = 0;
+let callCtl = null;
+let callRideId = null;
+let offerServer = { serverMs: 0, fetchedAt: 0 };
+let offerCountdownTimer = null;
 
 const VEHICLES = [
   { key: "bike", ico: "🏍️" }, { key: "rickshaw", ico: "🛺" },
@@ -40,6 +50,7 @@ window.onLangChange = () => {
   if (currentScreen === "wallet") loadRiderWallet();
   if (currentScreen === "profile") renderProfile();
   renderRiderTopupForm();
+  if (riderTopupPicker) riderTopupPicker.refresh(settings);
 };
 
 // ---------- Map ----------
@@ -113,8 +124,12 @@ function requestGpsPickup(silent) {
   );
 }
 function fallbackPickup() {
+  // v2.3: GPS failed — fall back to the place pickup and say so plainly.
   gpsPos = null; gpsDistanceKm = null;
-  if (placeByName("Chunian City")) $("pickup").value = "Chunian City";
+  if (placeByName("Chunian City")) {
+    $("pickup").value = "Chunian City";
+    setErr($("gps-err"), t("gps_pickup_failed", { place: "Chunian City" }));
+  }
 }
 function computeGpsDistance() {
   gpsDistanceKm = null;
@@ -179,6 +194,7 @@ async function riderSignup(btn) {
   try {
     const d = await api("/api/auth/signup", { method: "POST", body: JSON.stringify({ name, phone, password, role: "rider" }) });
     store.rider = d.user;
+    markClientLoggedIn();
     afterLogin();
     toast(t("welcome_back") + ", " + d.user.name, "ok");
   } catch (e) { setErr($("auth-err"), e.message); }
@@ -191,6 +207,7 @@ async function riderLogin(btn) {
   try {
     const d = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ phone, password }) });
     store.rider = d.user;
+    markClientLoggedIn();
     afterLogin();
     toast(t("welcome_back") + ", " + d.user.name, "ok");
   } catch (e) { setErr($("auth-err"), e.message); }
@@ -210,6 +227,12 @@ async function requestRide(btn) {
   if (!store.rider) { setErr($("book-err"), t("err_login_first")); toast(t("err_login_first"), "error"); return; }
   const body = { rider_id: store.rider.id, pickup: $("pickup").value === "__gps__" ? "Current location" : $("pickup").value, destination: $("destination").value, vehicle, proposed_fare: Number($("proposed-fare").value) || (fareEstimate && fareEstimate.suggested_fare) };
   if ($("pickup").value === "__gps__" && gpsDistanceKm) body.distance_km = Math.max(1, Math.round(gpsDistanceKm * 10) / 10);
+  // v2.3: send the rider's GPS pickup point so the driver sees a real
+  // pickup distance (contract §2.4). Only when GPS actually fixed.
+  if ($("pickup").value === "__gps__" && gpsPos) {
+    body.pickup_lat = gpsPos.lat;
+    body.pickup_lng = gpsPos.lng;
+  }
   const promo = $("promo-code") ? $("promo-code").value.trim() : "";
   if (promo) body.promo_code = promo;
   const sd = $("sched-date").value, st = $("sched-time").value;
@@ -226,6 +249,7 @@ async function requestRide(btn) {
   try {
     const d = await api("/api/rides", { method: "POST", body: JSON.stringify(body) });
     currentRide = d.ride_id;
+    chatLastId = 0;
     $("offers-card").classList.remove("hidden");
     await loadOffers();
     toast(d.scheduled_for ? t("ride_requested_sched", { id: d.ride_id, when: fmtSched(d.scheduled_for) }) : t("ride_requested", { id: d.ride_id, n: d.offers_created }), "ok");
@@ -237,17 +261,37 @@ async function loadOffers() {
   if (!currentRide) return;
   try {
     const d = await api(`/api/rides/${currentRide}`);
+    offerServer = { serverMs: d.server_time_ms || Date.now(), fetchedAt: Date.now() };
     const list = $("offers-list");
     const pending = d.offers.filter((o) => o.status === "pending");
-    list.innerHTML = pending.length ? pending.map((o) => `
+    list.innerHTML = pending.length ? pending.map((o) => {
+      const rem = o.expires_at != null ? serverRemainingMs(o.expires_at, offerServer.serverMs, offerServer.fetchedAt) : null;
+      return `
       <div class="offer">
         <b>${fmtRs(o.fare)}</b> — ${escapeHtml(o.driver_name)} ${ratingText(o.driver_rating, o.driver_rating_count, "driver")}<br>
         ${escapeHtml(o.vehicle_model)} • ${escapeHtml(o.plate)} • ${t("eta_min", { min: o.eta_min })}
+        ${rem != null ? `<br><span class="v23-countdown" data-offer-countdown="${o.expires_at}">${fmtCountdown(Math.max(0, rem))}</span>` : ""}
         <br><button class="primary" data-offer="${o.id}">${t("choose_driver")}</button>
-      </div>`).join("") : `<p class="muted empty">${t("no_offers")}</p>`;
+      </div>`;
+    }).join("") : `<p class="muted empty">${t("no_offers")}</p>`;
     $$("[data-offer]", list).forEach((b) => b.addEventListener("click", () => acceptOffer(Number(b.dataset.offer), b)));
+    startOfferCountdown();
+    // Counter-offers arrive as new pending offers: the 5s refresh while
+    // the ride is still requested surfaces them (plus the notification
+    // feed, polled every 15s by initNotifications).
     if (d.ride.status !== "requested") showTrip();
   } catch (e) { toast(e.message, "error"); }
+}
+function startOfferCountdown() {
+  if (offerCountdownTimer) return;
+  offerCountdownTimer = setInterval(() => {
+    $$("[data-offer-countdown]").forEach((el) => {
+      const rem = serverRemainingMs(Number(el.dataset.offerCountdown), offerServer.serverMs, offerServer.fetchedAt);
+      if (rem == null) return;
+      if (rem <= 0) { el.textContent = t("countdown_expired"); el.classList.add("v23-expired"); }
+      else el.textContent = fmtCountdown(rem);
+    });
+  }, 1000);
 }
 async function acceptOffer(offerId, btn) {
   setLoading(btn, true);
@@ -259,7 +303,7 @@ async function acceptOffer(offerId, btn) {
   finally { setLoading(btn, false); }
 }
 
-// ---------- Live trip ----------
+// ---------- Live trip (v2.3: 5s poll while active) ----------
 async function showTrip(silent) {
   if (!currentRide) return;
   try {
@@ -270,6 +314,7 @@ async function showTrip(silent) {
     let locLine = "";
     if (drv && (r.status === "accepted" || r.status === "ongoing")) {
       const loc = d.driver_location;
+      // Freshness rule (unchanged): fresh iff updated_at < 180 s old.
       const fresh = loc && loc.lat != null && loc.lng != null && loc.updated_at && Date.now() - loc.updated_at < 180000;
       if (fresh) {
         updateDriverMarker(loc.lat, loc.lng);
@@ -286,16 +331,27 @@ async function showTrip(silent) {
         locLine = `<p class="loc-line warn">${t("driver_loc_missing")}</p>`;
       }
     } else clearDriverMarker();
+    const destCoords = placeByName(r.destination);
     $("trip-info").innerHTML = `
       <p><b>Ride #${r.id}</b> — ${escapeHtml(r.pickup)} → ${escapeHtml(r.destination)} (${r.distance_km} km, ${vehLabel(r.vehicle_type)})</p>
       ${schedLine(r.scheduled_for)}
-      <p>${t("status")}: <span class="badge st-${r.status}">${escapeHtml(r.status)}</span> • ${t("fare")}: <b>${fmtRs(r.agreed_fare || r.suggested_fare)}</b> (${t("offered", { fare: r.proposed_fare })})${tipLine(r.tip_amount)}</p>
+      <p>${t("status")}: <span class="badge st-${r.status}">${escapeHtml(r.status)}</span> • ${t("agreed_fare_label")}: <b>${fmtRs(r.agreed_fare || r.suggested_fare)}</b> (${t("offered", { fare: r.proposed_fare })})${tipLine(r.tip_amount)}</p>
       ${drv ? `<p>${escapeHtml(drv.driver_name)} ${ratingText(drv.driver_rating, drv.driver_rating_count, "driver")} — ${escapeHtml(drv.vehicle_model)}, ${escapeHtml(drv.plate)}, ${t("eta_min", { min: drv.eta_min })}</p>` : ""}
       <p>${t("trip_cash")} ${r.cash_confirmed ? t("cash_confirmed") : ""}</p>
       ${locLine}
+      ${destCoords ? `<p class="v23-nav-links"><a target="_blank" rel="noopener" href="${gmapsDirUrl(destCoords.lat, destCoords.lng)}">${escapeHtml(t("nav_external_gmaps"))}</a> · <a target="_blank" rel="noopener" href="${osmDirUrl(destCoords.lat, destCoords.lng)}">${escapeHtml(t("nav_external_osm"))}</a></p>` : ""}
       ${r.status === "completed" ? `<p>${t("trip_done")}</p>` : ""}`;
-    if (drv) { $("chat-box").classList.remove("hidden"); loadChat(); ensureChatTimer(); }
-    else $("chat-box").classList.add("hidden");
+    if (drv) {
+      $("chat-box").classList.remove("hidden");
+      loadChat();
+      ensureChatTimer();
+      ensureCallForRide(r);
+    } else {
+      $("chat-box").classList.add("hidden");
+      if (callCtl) { callCtl.reset(); callCtl = null; callRideId = null; }
+      const cb = $("rider-call-box");
+      if (cb) cb.classList.add("hidden");
+    }
     if (r.status === "completed") {
       $("rate-box").classList.remove("hidden");
       $("rate-stars").innerHTML = [1, 2, 3, 4, 5].map((s) => `<button data-stars="${s}" aria-label="${s} stars">⭐</button>`).join("");
@@ -303,8 +359,8 @@ async function showTrip(silent) {
       if (!r.tip_amount) { $("tip-box").classList.remove("hidden"); $("tip-out").textContent = ""; }
       else $("tip-box").classList.add("hidden");
     } else { $("tip-box").classList.add("hidden"); $("rate-box").classList.add("hidden"); }
-    if (r.status === "requested") setTimeout(loadOffers, 8000);
-    if (r.status === "accepted" || r.status === "ongoing") setTimeout(() => showTrip(), 8000);
+    if (r.status === "requested") setTimeout(loadOffers, 5000);
+    if (r.status === "accepted" || r.status === "ongoing") setTimeout(() => showTrip(), 5000);
   } catch (e) { if (!silent) toast(e.message, "error"); }
 }
 function updateDriverMarker(lat, lng) {
@@ -316,23 +372,44 @@ function clearDriverMarker() {
   if (driverMarker && map) { map.removeLayer(driverMarker); driverMarker = null; }
 }
 
-// ---------- In-ride chat ----------
+// ---------- In-ride chat (v2.3: 3s poll, ?after=&limit=50, unread badge) ----------
 function ensureChatTimer() {
   if (chatTimer) return;
   chatTimer = setInterval(() => {
     if (currentRide && !$("trip-card").classList.contains("hidden") && !$("chat-box").classList.contains("hidden")) loadChat();
-  }, 5000);
+  }, 3000);
 }
 function renderChatList(el, msgs, myRole) {
   if (!el) return;
   el.innerHTML = msgs.length ? msgs.map((m) => `<div class="chat-msg ${m.sender_role === myRole ? "mine" : "theirs"}"><span>${escapeHtml(m.message)}</span><small>${new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></div>`).join("") : `<p class="muted">${t("chat_empty")}</p>`;
   el.scrollTop = el.scrollHeight;
 }
+function appendChat(msgs) {
+  const el = $("chat-list");
+  if (!el || !msgs.length) return;
+  if (chatLastId === 0) el.innerHTML = "";
+  msgs.forEach((m) => {
+    const div = document.createElement("div");
+    div.className = "chat-msg " + (m.sender_role === "rider" ? "mine" : "theirs");
+    div.innerHTML = `<span>${escapeHtml(m.message)}</span><small>${new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small>`;
+    el.appendChild(div);
+    chatLastId = Math.max(chatLastId, m.id);
+  });
+  el.scrollTop = el.scrollHeight;
+}
 async function loadChat() {
   if (!currentRide || !store.rider) return;
   try {
-    const d = await api(`/api/rides/${currentRide}/messages?user_id=${store.rider.id}`);
-    renderChatList($("chat-list"), d.messages, "rider");
+    const d = await api(`/api/rides/${currentRide}/messages?after=${chatLastId}&limit=50`);
+    if (chatLastId === 0 && !(d.messages || []).length) renderChatList($("chat-list"), [], "rider");
+    else appendChat(d.messages || []);
+    const badge = $("chat-unread");
+    if (badge) {
+      const n = d.unread_count || 0;
+      badge.textContent = t("chat_unread", { n });
+      badge.style.display = n ? "" : "none";
+      if (n) setTimeout(() => { badge.style.display = "none"; }, 6000);
+    }
   } catch {}
 }
 async function sendChat(btn) {
@@ -345,6 +422,58 @@ async function sendChat(btn) {
     input.value = "";
     loadChat();
   } catch (e) { toast(e.message, "error"); }
+  finally { setLoading(btn, false); }
+}
+
+// ---------- In-app voice call (rider side) ----------
+function ensureCallForRide(ride) {
+  if (!ride || (ride.status !== "accepted" && ride.status !== "ongoing")) return;
+  if (callCtl && callRideId === ride.id) { callCtl.startPolling(); return; }
+  if (callCtl) callCtl.reset();
+  callRideId = ride.id;
+  callCtl = createRideCall({
+    rideId: ride.id, myRole: "rider", myUserId: store.rider.id,
+    mount: $("rider-call-box"), onState: updateCallUI,
+  });
+  callCtl.startPolling();
+  updateCallUI("idle");
+}
+function updateCallUI(state) {
+  const box = $("rider-call-box");
+  if (!box) return;
+  box.classList.remove("hidden");
+  const st = $("rider-call-status");
+  const btnCall = $("btn-rider-call"), btnAcc = $("btn-rider-call-accept"), btnRej = $("btn-rider-call-reject"),
+    btnMute = $("btn-rider-call-mute"), btnEnd = $("btn-rider-call-end");
+  const show = (el, on) => { if (el) el.classList.toggle("hidden", !on); };
+  if (st) {
+    st.textContent = state === "calling" ? t("call_connecting") : state === "incoming" ? t("call_incoming")
+      : state === "in-call" ? t("call_in_call") : state === "no-answer" ? t("call_no_answer")
+      : state === "ended" ? t("call_ended") : state === "failed" ? t("call_failed") : "";
+  }
+  show(btnCall, state === "idle" || state === "ended" || state === "no-answer" || state === "failed");
+  show(btnAcc, state === "incoming");
+  show(btnRej, state === "incoming");
+  show(btnMute, state === "in-call" || state === "calling");
+  show(btnEnd, state === "in-call" || state === "calling" || state === "incoming");
+  if (btnMute) btnMute.textContent = callCtl && callCtl.isMuted() ? t("call_unmute") : t("call_mute");
+  if ((state === "no-answer" || state === "ended" || state === "failed") && callCtl) {
+    setTimeout(() => { if (callCtl && callCtl.getState() === state) updateCallUI("idle"); }, 4000);
+  }
+}
+
+// ---------- Complaint (rider side, active ride) ----------
+async function sendComplaint(btn) {
+  const input = $("complaint-text");
+  const text = input.value.trim();
+  if (!text || !currentRide) { setErr($("complaint-out"), t("complaint_enter")); return; }
+  setLoading(btn, true);
+  try {
+    await postComplaint(currentRide, text);
+    input.value = "";
+    setErr($("complaint-out"), t("complaint_sent"));
+    toast(t("complaint_sent"), "ok");
+  } catch (e) { setErr($("complaint-out"), e.message); toast(e.message, "error"); }
   finally { setLoading(btn, false); }
 }
 async function rateRide(stars) {
@@ -428,15 +557,25 @@ async function loadRiderWallet() {
   }
 }
 
-// ---------- Rider wallet top-up (v2.1 — same manual JazzCash flow as drivers) ----------
+// ---------- Rider wallet top-up (v2.3 — JazzCash / Sadapay picker) ----------
+function updateRiderTopupButton(method, num, blocked) {
+  const btn = $("btn-rider-topup");
+  if (!btn) return;
+  const tid = $("rider-topup-tid");
+  if (tid) tid.placeholder = t(method === "Sadapay" ? "topup_tid_ph_sadapay" : "topup_tid_ph");
+  if (blocked) {
+    btn.textContent = t("sadapay_not_set");
+    btn.disabled = true;
+  } else {
+    btn.disabled = false;
+    btn.textContent = num ? t("btn_topup_method", { method: t(method === "Sadapay" ? "method_sadapay" : "method_jazzcash"), num }) : t("btn_topup", { num: settings.jazzcash_number || "03266040350" });
+  }
+}
 function renderRiderTopupForm() {
-  const amt = $("rider-topup-amount"), btn = $("btn-rider-topup"), note = $("rider-topup-note");
-  if (!amt || !btn || !note) return;
+  const amt = $("rider-topup-amount");
+  if (!amt) return;
   const min = Number(settings.min_topup || 500);
-  const num = settings.jazzcash_number || "03266040350";
   amt.placeholder = t("topup_amount_ph", { min });
-  btn.textContent = t("btn_topup", { num });
-  note.textContent = t("topup_note", { num });
 }
 function renderRiderTopupRequests(d) {
   const box = $("rider-topup-requests");
@@ -447,9 +586,11 @@ function renderRiderTopupRequests(d) {
 async function riderTopup(btn) {
   const amount = Number($("rider-topup-amount").value), tid = $("rider-topup-tid").value.trim();
   if (!amount) { setErr($("rider-topup-err"), t("topup_enter_amount")); return; }
+  const method = riderTopupPicker ? riderTopupPicker.getMethod() : "JazzCash";
+  if (riderTopupPicker && riderTopupPicker.isBlocked()) { setErr($("rider-topup-err"), t("sadapay_not_set")); return; }
   setLoading(btn, true);
   try {
-    const d = await api("/api/topup", { method: "POST", body: JSON.stringify({ amount, method: "JazzCash", tid }) });
+    const d = await api("/api/topup", { method: "POST", body: JSON.stringify({ amount, method, tid }) });
     toast(t("topup_sent", { id: d.request_id, amount: d.amount }), "ok");
     $("rider-topup-amount").value = ""; $("rider-topup-tid").value = "";
     loadRiderWallet();
@@ -458,11 +599,14 @@ async function riderTopup(btn) {
 }
 
 // ---------- Profile ----------
+// Note: there is no server endpoint to change a user's display name, so the
+// profile shows the name (read-only) — no dead edit button is rendered.
 function renderProfile() {
   if (!store.rider) return;
   const u = store.rider;
   $("profile-info").innerHTML = `<p><b>${escapeHtml(u.name)}</b><br>${escapeHtml(u.phone)} • ${t("your_id")} #${u.id}<br>${t("rating")}: ${ratingText(u.rating, u.rating_count, "rider")}</p>`;
-  $("support-info").innerHTML = `<p>${t("police")}: <a href="tel:15"><strong>15</strong></a> &nbsp;•&nbsp; ${t("rescue")}: <a href="tel:1122"><strong>1122</strong></a>${settings.support_phone ? `<br>${t("support_owner")}: <a href="tel:${escapeHtml(settings.support_phone)}">${escapeHtml(settings.support_phone)}</a>` : ""}</p>`;
+  renderSupportInfo($("support-info"), settings);
+  renderPushToggle($("rider-push-toggle-box"));
 }
 
 // ---------- Boot ----------
@@ -479,6 +623,7 @@ async function boot() {
   applyI18n();
   await loadSettings();
   renderRiderTopupForm();
+  riderTopupPicker = initTopupPicker($("rider-topup-method-box"), settings, updateRiderTopupButton);
   $("btn-rider-topup").addEventListener("click", (e) => riderTopup(e.currentTarget));
   // The map is optional: if Leaflet's CDN fails (offline / blocked), the
   // whole rider app must NOT die — booking via the place selects still
@@ -490,6 +635,7 @@ async function boot() {
   try {
     const d = await api("/api/auth/me");
     if (d.user) {
+      markClientLoggedIn();
       if (d.user.role === "driver") { location.href = "/driver"; return; }
       store.rider = d.user;
       $("rider-name").value = d.user.name; $("rider-phone").value = d.user.phone;

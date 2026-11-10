@@ -1,0 +1,44 @@
+/* Chunian Ride v2.3 — rider/driver styles (new in v2.3).
+   Loaded by rider.html and driver.html only. Do NOT edit style.css. */
+
+/* --- Driver request hero card (§B1) --- */
+.v23-req-card { border: 1px solid #dfe4ee; border-radius: 14px; padding: 12px; margin: 10px 0; background: #fff; }
+.v23-req-card.v23-hero { border: 2px solid #0b5ed7; box-shadow: 0 4px 16px rgba(11, 94, 215, .15); }
+.v23-req-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.v23-countdown { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; font-size: 1.15em; color: #c81e1e; }
+.v23-countdown.v23-expired, .v23-expired { color: #c81e1e; font-weight: 700; }
+.v23-badge-est { display: inline-block; font-size: .75em; font-weight: 700; color: #6b7280; border: 1px solid #d1d5db; border-radius: 999px; padding: 1px 7px; margin-left: 4px; }
+.v23-req-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.v23-req-actions .primary { flex: 1 1 100%; }
+.v23-disabled, button:disabled.v23-disabled { opacity: .45; }
+.v23-counter-sheet { border-top: 1px dashed #d1d5db; margin-top: 10px; padding-top: 10px; }
+.v23-map { height: 260px; border-radius: 12px; margin: 10px 0; z-index: 0; }
+.v23-nav-links { margin-top: 8px; }
+.v23-nav-links button { margin-right: 6px; }
+
+/* --- GPS states --- */
+.v23-gps-banner { border-radius: 10px; padding: 10px; margin: 8px 0; }
+.v23-gps-banner.v23-gps-ok { background: #eaf7ee; border: 1px solid #bfe6c8; }
+.v23-gps-banner.v23-gps-warn { background: #fff7e0; border: 1px solid #f0d48a; }
+.v23-gps-banner.v23-gps-bad { background: #fdecea; border: 1px solid #f5b5ae; }
+.v23-chip { display: inline-block; background: #eef2f7; border: 1px solid #d1d5db; border-radius: 999px; padding: 2px 9px; font-size: .85em; margin-right: 6px; }
+
+/* --- Chat unread badge --- */
+.v23-unread-badge { display: inline-block; background: #c81e1e; color: #fff; font-size: .8em; font-weight: 700; border-radius: 999px; padding: 2px 8px; margin-left: 6px; vertical-align: middle; }
+
+/* --- Voice call box --- */
+.v23-call { border: 1px solid #dfe4ee; border-radius: 12px; padding: 10px; margin: 10px 0; background: #f8fafc; }
+.v23-call p { margin: 4px 0 8px; font-weight: 700; }
+
+/* --- Complaint form --- */
+.v23-complaint { border-top: 1px solid #e5e7eb; margin-top: 12px; padding-top: 10px; }
+.v23-complaint textarea { width: 100%; min-height: 64px; resize: vertical; }
+
+/* --- Top-up method picker (JazzCash / Sadapay only) --- */
+.v23-methods { display: flex; gap: 8px; margin: 8px 0; }
+.v23-method { flex: 1; padding: 10px; border: 2px solid #d1d5db; border-radius: 10px; background: #fff; font-weight: 700; cursor: pointer; }
+.v23-method.active { border-color: #0b5ed7; background: #eaf1fe; }
+.v23-method-note { margin: 6px 0; }
+
+/* --- Misc --- */
+.v23-offer-count { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; color: #c81e1e; }

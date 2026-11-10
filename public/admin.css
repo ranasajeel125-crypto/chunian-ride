@@ -217,3 +217,27 @@ footer.admin-foot { padding: 16px 20px; color: var(--muted); font-size: 12px; te
 .doc-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f3f7; flex-wrap: wrap; }
 .doc-row:last-child { border-bottom: none; }
 .doc-thumb { max-width: 180px; max-height: 180px; border: 1px solid #dbe4ef; border-radius: 8px; object-fit: contain; }
+
+/* ---------- Client errors (v2.3 §2.11) ---------- */
+.stack-details { margin-top: 8px; }
+.stack-details summary { cursor: pointer; font-weight: 700; font-size: 13px; color: var(--navy); }
+.stack-pre {
+  white-space: pre-wrap; word-break: break-word;
+  background: #0f1f33; color: #dbeafe;
+  border-radius: 10px; padding: 10px 12px; margin: 8px 0 0;
+  font-size: 12px; line-height: 1.5; max-height: 300px; overflow-y: auto;
+  text-align: left; direction: ltr;
+}
+
+/* ---------- RTL (Urdu mode, v2.3) ---------- */
+/* document.documentElement.dir is set to "rtl" by applyLang() in admin.js
+   when Urdu is active. Flex/grid rows mirror automatically via direction;
+   only physical left/right rules need explicit overrides. LTR is untouched. */
+[dir="rtl"] th, [dir="rtl"] td { text-align: right; }
+[dir="rtl"] .nav-btn { text-align: right; }
+[dir="rtl"] .nav-btn .badge { margin-left: 0; margin-right: auto; }
+[dir="rtl"] .lang-switch .lang-opt + .lang-opt { border-left: none; border-right: 1px solid rgba(255,255,255,.4); }
+[dir="rtl"] .notif-panel { right: auto; left: 0; }
+[dir="rtl"] .notif-badge { right: auto; left: -6px; }
+[dir="rtl"] input, [dir="rtl"] select, [dir="rtl"] textarea { text-align: right; }
+[dir="rtl"] input[type="number"] { text-align: right; }

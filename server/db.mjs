@@ -10,6 +10,13 @@ import { createClient } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+// web-push is optional at runtime: if the package is ever missing the
+// server still boots and push is simply disabled (logged, not fatal).
+const _require = createRequire(import.meta.url);
+let webpush = null;
+try { webpush = _require("web-push"); } catch { webpush = null; }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -328,6 +335,39 @@ const STATEMENTS = [
     home_address TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
   )`,
+  // Call signals (v2.3, WebRTC signalling — the server only stores +
+  // relays them between the matched rider and driver; no media flows here).
+  `CREATE TABLE IF NOT EXISTS call_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ride_id INTEGER NOT NULL REFERENCES rides(id),
+    sender_id INTEGER NOT NULL,
+    sender_role TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_call_signals_ride ON call_signals(ride_id, id)`,
+  // Web push subscriptions (v2.3, VAPID — free, no Firebase).
+  `CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL DEFAULT '',
+    auth TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id)`,
+  // Client error reports (v2.3) — the app posts JS errors here for the owner.
+  `CREATE TABLE IF NOT EXISTS client_errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    message TEXT NOT NULL DEFAULT '',
+    stack TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_client_errors_created ON client_errors(created_at)`,
   // Pilot whitelist (Phase 3, v2.2) — the ONLY phones allowed to sign up
   // while pilot_mode is ON. status: 'pending' (invited, not signed up yet)
   // | 'approved' (account created) | 'revoked' (removed by the owner).
@@ -357,9 +397,25 @@ const COLUMN_MIGRATIONS = [
   ["rides", "promo_code TEXT NOT NULL DEFAULT ''"],
   ["rides", "discount_amount INTEGER NOT NULL DEFAULT 0"],
   ["rides", "cancel_reason TEXT NOT NULL DEFAULT ''"],
+  ["rides", "pickup_lat REAL"],
+  ["rides", "pickup_lng REAL"],
+  ["offers", "expires_at INTEGER"],
+  ["documents", "expires_at INTEGER"],
+  ["ride_messages", "read_at INTEGER"],
 ];
 
-function haversineKm(a, b) {
+// Offer TTL (v2.3): an offer lives 4 minutes; after that it expires and can
+// no longer be accepted or declined. Overridable via OFFER_TTL_MS (ms) for
+// tests only — production always uses the 4-minute default.
+export const OFFER_TTL_MS = Number(process.env.OFFER_TTL_MS || 4 * 60 * 1000);
+// Scheduled-ride reminder window (v2.3): remind when the ride is due
+// within the next 30 minutes. Call-signal retention (v2.3): 10 minutes.
+export const SCHEDULED_REMINDER_WINDOW_MS = 30 * 60 * 1000;
+export const CALL_SIGNAL_TTL_MS = 10 * 60 * 1000;
+// Average in-town speed used for the pickup ETA (v2.3).
+export const PICKUP_SPEED_KMH = 25;
+
+export function haversineKm(a, b) {
   const R = 6371;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
   const dLng = ((b.lng - a.lng) * Math.PI) / 180;
@@ -383,12 +439,62 @@ export function distanceBetween(fromName, toName) {
   return { km: Math.round(haversineKm(a, b) * 1.3), estimated: true };
 }
 
+// Lazy offer expiry (v2.3): pending offers past their expires_at become
+// 'expired'. Legacy rows without expires_at expire TTL after created_at.
+export async function expireStaleOffers(txOrClient, rideId = null) {
+  const nowMs = Date.now();
+  const args = [nowMs, nowMs - OFFER_TTL_MS];
+  let sql = `UPDATE offers SET status='expired' WHERE status='pending' AND ((expires_at IS NOT NULL AND expires_at < ?) OR (expires_at IS NULL AND created_at < ?))`;
+  if (rideId != null) { sql += " AND ride_id = ?"; args.push(rideId); }
+  try { await txOrClient.execute({ sql, args }); } catch (e) { console.warn("[chunian-ride] expireStaleOffers failed:", e.message); }
+}
+
+// Real pickup distance (v2.3): haversine from the driver's last known GPS
+// fix to the ride's pickup point. Pickup coords come from the ride's own
+// GPS (pickup_lat/lng) when the rider sent them, else the PLACES table.
+// estimated=false ONLY when both ends are real GPS: the driver has posted
+// a live fix (loc_updated_at set) AND the ride carries GPS pickup coords.
+// Otherwise the distance is an estimate (registration-default driver
+// position, or a named-place pickup pin). With no driver position at all,
+// fall back to the place-table distance from Chunian City.
+export function computePickupDistance(driverRow, ride) {
+  let plat = null, plng = null, fromGps = false;
+  // NOTE: Number(null) === 0, so null coords must be excluded explicitly —
+  // otherwise a ride without GPS silently computes from (0, 0).
+  if (ride && ride.pickup_lat != null && ride.pickup_lng != null && Number.isFinite(Number(ride.pickup_lat)) && Number.isFinite(Number(ride.pickup_lng))) {
+    plat = Number(ride.pickup_lat); plng = Number(ride.pickup_lng); fromGps = true;
+  } else if (ride) {
+    const place = PLACES.find((p) => p.name === ride.pickup);
+    if (place) { plat = place.lat; plng = place.lng; }
+  }
+  if (plat == null || plng == null) {
+    return { pickup_distance_km: null, pickup_distance_estimated: true, pickup_eta_min: null };
+  }
+  const hasFix = !!driverRow && Number.isFinite(Number(driverRow.lat)) && Number.isFinite(Number(driverRow.lng));
+  const liveFix = hasFix && driverRow.loc_updated_at != null;
+  let km;
+  if (hasFix) {
+    km = haversineKm({ lat: Number(driverRow.lat), lng: Number(driverRow.lng) }, { lat: plat, lng: plng });
+  } else {
+    const d = distanceBetween("Chunian City", ride.pickup);
+    if (d.km == null) return { pickup_distance_km: null, pickup_distance_estimated: true, pickup_eta_min: null };
+    km = d.km;
+  }
+  km = Math.round(km * 100) / 100;
+  return {
+    pickup_distance_km: km,
+    pickup_distance_estimated: !(liveFix && fromGps),
+    pickup_eta_min: Math.max(1, Math.round((km / PICKUP_SPEED_KMH) * 60)),
+  };
+}
+
 export async function getSettings() {
   const res = await client.execute("SELECT key, value FROM settings");
   const out = { ...DEFAULT_SETTINGS };
   for (const row of res.rows) {
-    // NEVER leak the admin setup-token hash: /api/settings is public.
-    if (row.key === "admin_setup_token_hash") continue;
+    // NEVER leak secrets: /api/settings is public. The admin setup-token
+    // hash and the VAPID private key are both filtered here.
+    if (row.key === "admin_setup_token_hash" || row.key === "vapid_private_key") continue;
     out[row.key] = row.value;
   }
   return out;
@@ -524,6 +630,8 @@ export async function rejectTopup(requestId, adminId, reason = "") {
 // ---- Notifications (v2.1, in-app feed — no push) ----
 // Insert one notification row. NEVER throws: a failed notification must
 // never roll back the money/ride operation running in the same transaction.
+// v2.3: after the insert, a web push is attempted for user-role
+// notifications — fire-and-forget, never awaited, never throwing.
 export async function notify(txOrClient, { userId, role = "user", type, params = {}, rideId = null }) {
   try {
     await txOrClient.execute({
@@ -532,6 +640,145 @@ export async function notify(txOrClient, { userId, role = "user", type, params =
     });
   } catch (e) {
     console.warn("[chunian-ride] notification insert failed:", e.message);
+    return;
+  }
+  if (role === "user") {
+    void sendPushToUser(Number(userId), type, params, rideId).catch(() => {});
+  }
+}
+
+// ---- Web Push (v2.3, free — VAPID, no Firebase) ----
+// VAPID keys are generated ONCE at first boot and persisted in settings.
+// The private key is NEVER returned by /api/settings (filtered in
+// getSettings, same as admin_setup_token_hash). Subject is a placeholder
+// (no real owner email exists for this); it only identifies the sender to
+// the push service.
+export const VAPID_SUBJECT = "mailto:owner@chunian-ride.local";
+let vapidKeysCache = null; // { publicKey, privateKey }
+let vapidConfigured = false;
+
+export async function ensureVapidKeys() {
+  try {
+    const res = await client.execute({ sql: "SELECT key, value FROM settings WHERE key IN ('vapid_public_key', 'vapid_private_key')" });
+    const map = {};
+    for (const row of res.rows) map[row.key] = row.value;
+    if (map.vapid_public_key && map.vapid_private_key) {
+      vapidKeysCache = { publicKey: map.vapid_public_key, privateKey: map.vapid_private_key };
+    } else {
+      if (!webpush) { console.warn("[chunian-ride] web-push package missing — web push disabled"); return null; }
+      const keys = webpush.generateVAPIDKeys();
+      await client.execute({ sql: "INSERT INTO settings(key, value) VALUES ('vapid_public_key', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", args: [keys.publicKey] });
+      await client.execute({ sql: "INSERT INTO settings(key, value) VALUES ('vapid_private_key', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", args: [keys.privateKey] });
+      vapidKeysCache = { publicKey: keys.publicKey, privateKey: keys.privateKey };
+      console.log("[chunian-ride] VAPID keys generated and stored in settings");
+    }
+    if (webpush && !vapidConfigured) {
+      webpush.setVapidDetails(VAPID_SUBJECT, vapidKeysCache.publicKey, vapidKeysCache.privateKey);
+      vapidConfigured = true;
+    }
+    return vapidKeysCache.publicKey;
+  } catch (e) {
+    console.warn("[chunian-ride] VAPID setup failed (push disabled):", e.message);
+    return null;
+  }
+}
+
+export async function getVapidPublicKey() {
+  if (vapidKeysCache) return vapidKeysCache.publicKey;
+  return ensureVapidKeys();
+}
+
+// Server-side push text (EN) — mirrors public/shared.js NOTIF_TEMPLATES
+// (the client renders localized text for the in-app feed; the push payload
+// carries the EN rendering). New v2.3 types are at the end.
+const NOTIF_PUSH_TEXT = {
+  offer_received: { title: "New offer on Ride #{ride}", body: "{driver} offered Rs {fare}." },
+  ride_accepted: { title: "Ride #{ride} accepted", body: "Agreed fare Rs {fare} — go to the pickup." },
+  ride_started: { title: "Your trip has started", body: "Ride #{ride} is on the way." },
+  ride_completed: { title: "Ride complete", body: "Thank you! Ride #{ride} is complete — fare Rs {fare}." },
+  trip_completed: { title: "Trip complete", body: "Ride #{ride} complete — fare Rs {fare}, you kept Rs {kept}." },
+  tip_received: { title: "Tip received", body: "Tip Rs {tip} on Ride #{ride} — 100% yours, no commission." },
+  topup_approved: { title: "Top-up approved", body: "Rs {amount} added to your wallet (TID {tid})." },
+  topup_rejected: { title: "Top-up rejected", body: "Rs {amount} was not credited. {reason}" },
+  topup_requested: { title: "New top-up request", body: "{name} requested Rs {amount} ({method}, TID {tid})." },
+  driver_approved: { title: "Driver account approved", body: "You can go online now and take rides." },
+  driver_blocked: { title: "Driver account blocked", body: "Your driver account was blocked. Contact the owner." },
+  withdrawal_requested: { title: "New withdrawal request", body: "{name} requested Rs {amount} to JazzCash {number}." },
+  withdrawal_approved: { title: "Withdrawal approved", body: "Rs {amount} will be paid to your JazzCash {number}." },
+  withdrawal_rejected: { title: "Withdrawal rejected", body: "Rs {amount} refunded to your wallet. {reason}" },
+  complaint_resolved: { title: "Complaint resolved", body: "Your complaint #{id} has been resolved." },
+  scheduled_booked: { title: "Scheduled ride booked", body: "Ride #{ride} booked for {when}." },
+  scheduled_request: { title: "Scheduled ride request", body: "Ride #{ride} — {pickup} → {destination} on {when}." },
+  refund_credited: { title: "Refund credited", body: "Rs {amount} refunded to your wallet. {reason}" },
+  doc_approved: { title: "Document approved", body: "Your {doc} was approved." },
+  doc_rejected: { title: "Document rejected", body: "Your {doc} was rejected. Please re-upload." },
+  sos_alert: { title: "SOS ALERT — Ride #{ride}", body: "Emergency! {message}" },
+  new_ride_request: { title: "New ride request", body: "Ride #{ride_id} — {pickup} → {destination} ({vehicle_type}), Rs {proposed_fare}." },
+  scheduled_ride_reminder: { title: "Ride in 30 minutes", body: "Your scheduled ride #{ride} — {pickup} → {destination} — is coming up in 30 minutes." },
+};
+
+function renderPushText(type, params) {
+  const tpl = NOTIF_PUSH_TEXT[type] || { title: "Chunian Ride", body: "You have a new notification." };
+  const fill = (s) => s.replace(/\{(\w+)\}/g, (_, k) => (params && params[k] != null ? String(params[k]) : ""));
+  return { title: fill(tpl.title), body: fill(tpl.body) };
+}
+
+// Best-effort web push to one user's subscriptions. Never throws. A 404/410
+// from the push service means the subscription is dead — delete it.
+export async function sendPushToUser(userId, type, params = {}, rideId = null) {
+  try {
+    if (!webpush) return;
+    if (!vapidKeysCache) await ensureVapidKeys();
+    if (!vapidKeysCache) return;
+    const subs = await client.execute({ sql: "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?", args: [Number(userId)] });
+    if (!subs.rows.length) return;
+    const { title, body } = renderPushText(type, params);
+    const payload = JSON.stringify({ title, body, type, ride_id: rideId, url: "/driver" });
+    for (const s of subs.rows) {
+      try {
+        await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload);
+      } catch (e) {
+        if (e && (e.statusCode === 404 || e.statusCode === 410)) {
+          await client.execute({ sql: "DELETE FROM push_subscriptions WHERE endpoint = ?", args: [s.endpoint] });
+        } else {
+          console.warn("[chunian-ride] web push failed:", e && e.message ? e.message : e);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[chunian-ride] web push failed:", e.message);
+  }
+}
+
+// ---- Scheduled-ride reminders (v2.3) ----
+// For rides with scheduled_for in the next 30 minutes and status
+// 'requested', notify the rider once (dedupe: an existing
+// 'scheduled_ride_reminder' notification for that ride) and the assigned
+// driver too, if one is assigned. Never throws — the 5-minute interval
+// and the lazy ride-read trigger both call this guarded.
+export async function runScheduledReminders() {
+  try {
+    const nowMs = Date.now();
+    const rows = await client.execute({
+      sql: "SELECT * FROM rides WHERE status = 'requested' AND scheduled_for IS NOT NULL AND scheduled_for > ? AND scheduled_for <= ?",
+      args: [nowMs, nowMs + SCHEDULED_REMINDER_WINDOW_MS],
+    });
+    for (const ride of rows.rows) {
+      const params = { ride: ride.id, pickup: ride.pickup, destination: ride.destination, scheduled_for: ride.scheduled_for };
+      const remind = async (userId) => {
+        const ex = await client.execute({
+          sql: "SELECT 1 AS x FROM notifications WHERE user_id = ? AND role = 'user' AND type = 'scheduled_ride_reminder' AND ride_id = ? LIMIT 1",
+          args: [Number(userId), ride.id],
+        });
+        if (!ex.rows.length) {
+          await notify(client, { userId: Number(userId), role: "user", type: "scheduled_ride_reminder", params, rideId: ride.id });
+        }
+      };
+      await remind(ride.rider_id);
+      if (ride.driver_id) await remind(ride.driver_id);
+    }
+  } catch (e) {
+    console.warn("[chunian-ride] scheduled-reminder sweep failed:", e.message);
   }
 }
 
@@ -610,15 +857,22 @@ export function pilotCap(role, settings) {
 // "cnic_front" and "cnic_back" (legacy two-photo flow). "other" uploads
 // never count toward the gate. Returns per-doc booleans + missing list.
 export async function getDocChecklist(txOrClient, driverUserId) {
+  const nowMs = Date.now();
   const rows = await txOrClient.execute({
-    sql: "SELECT doc_type, status FROM documents WHERE driver_id = ?",
+    sql: "SELECT doc_type, status, expires_at FROM documents WHERE driver_id = ?",
     args: [Number(driverUserId)],
   });
+  // A document counts as approved only while its approval is live: an
+  // approved document whose expires_at has passed no longer counts toward
+  // the gate (v2.3), so the driver is blocked from going online until
+  // they re-upload.
   const approved = new Set(
-    rows.rows.filter((r) => r.status === "approved").map((r) => r.doc_type)
+    rows.rows.filter((r) => r.status === "approved" && (r.expires_at == null || Number(r.expires_at) > nowMs)).map((r) => r.doc_type)
   );
   const byType = {};
   for (const r of rows.rows) byType[r.doc_type] = r.status;
+  const expired = [...new Set(rows.rows.filter((r) => r.status === "approved" && r.expires_at != null && Number(r.expires_at) <= nowMs).map((r) => r.doc_type))];
+  const expiresSoon = [...new Set(rows.rows.filter((r) => r.status === "approved" && r.expires_at != null && Number(r.expires_at) > nowMs && Number(r.expires_at) <= nowMs + 30 * 86400000).map((r) => r.doc_type))];
   const cnic = approved.has("cnic") || (approved.has("cnic_front") && approved.has("cnic_back"));
   const licence = approved.has("licence");
   const vehicle = approved.has("vehicle");
@@ -626,7 +880,7 @@ export async function getDocChecklist(txOrClient, driverUserId) {
   if (!cnic) missing.push("CNIC");
   if (!licence) missing.push("licence");
   if (!vehicle) missing.push("vehicle");
-  return { cnic, licence, vehicle, all: missing.length === 0, missing, byType };
+  return { cnic, licence, vehicle, all: missing.length === 0, missing, byType, expired, expires_soon: expiresSoon };
 }
 
 // ---- Withdrawals (v2.1) ----

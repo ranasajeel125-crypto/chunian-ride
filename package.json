@@ -2,9 +2,10 @@
   "dependencies": {
     "@libsql/client": "^0.15.15",
     "bcryptjs": "^3.0.3",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "web-push": "^4.0.0"
   },
-  "description": "Chunian Ride \u2014 inDrive-style ride-hailing website for Chunian, Tehsil Chunian, District Kasur, Punjab, Pakistan. Rider + driver + owner admin. Cash-first, negotiated fares, prepaid driver wallet.",
+  "description": "Chunian Ride — inDrive-style ride-hailing website for Chunian, Tehsil Chunian, District Kasur, Punjab, Pakistan. Rider + driver + owner admin. Cash-first, negotiated fares, prepaid driver wallet.",
   "engines": {
     "node": ">=20"
   },
@@ -16,5 +17,5 @@
     "i18n-check": "node scripts/i18n-check.mjs"
   },
   "type": "module",
-  "version": "2.2.0"
+  "version": "2.3.0"
 }

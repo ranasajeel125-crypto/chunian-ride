@@ -151,6 +151,67 @@ const STRINGS = {
     docs_checklist_ok: "✓",
     docs_checklist_no: "✗",
     pilot_only_note: "Pilot phase: rides are Chunian City only — intercity rides are not available yet.",
+    // v2.3 — request cards, GPS states, calls, complaints, top-up picker, push
+    new_request: "NEW RIDE REQUEST",
+    offer_expires_in: "Expires in {time}",
+    countdown_expired: "Expired",
+    pickup_dist: "{km} km away",
+    pickup_eta: "ETA ~{min} min",
+    estimated_badge: "estimated",
+    trip_duration: "{km} km • ~{min} min",
+    more_requests: "{n} more requests nearby",
+    no_my_offer: "You have no pending offer on this ride.",
+    gps_last_update: "GPS updated {time}",
+    gps_accuracy: "±{m} m",
+    gps_off_banner: "Location is off — turn on GPS to receive requests.",
+    gps_denied_banner: "Location permission denied — allow location in your phone settings to receive requests.",
+    gps_weak_banner: "Weak GPS signal — move outdoors for a better fix.",
+    gps_retry: "Retry GPS",
+    gps_settings_hint: "Open your phone Settings → Location → allow Chunian Ride.",
+    call_btn: "📞 Call",
+    call_incoming: "Incoming call…",
+    call_accept: "Accept call",
+    call_reject: "Reject",
+    call_mute: "Mute",
+    call_unmute: "Unmute",
+    call_end: "End call",
+    call_no_answer: "No answer — the other person did not pick up.",
+    call_ended: "Call ended.",
+    call_connecting: "Calling…",
+    call_in_call: "On call",
+    call_failed: "Call could not start — check microphone permission and try again.",
+    call_only_active: "Calls are only available during an active ride.",
+    nav_pickup: "Navigate to pickup",
+    nav_dest: "Navigate to destination",
+    nav_route_direct: "Direct route (estimated — not road distance)",
+    nav_route_road: "Road route",
+    nav_osrm_failed: "Road route unavailable — showing a direct line instead.",
+    complaint_title: "Report a problem with this ride",
+    complaint_ph: "Describe the problem…",
+    complaint_btn: "Send complaint",
+    complaint_sent: "Complaint sent — the owner will review it.",
+    complaint_enter: "Please write what happened first.",
+    topup_method: "Payment method",
+    method_jazzcash: "JazzCash",
+    method_sadapay: "Sadapay",
+    sadapay_not_set: "Sadapay number abhi set nahi — owner se rabta karein",
+    topup_tid_ph_sadapay: "Sadapay TID (transaction ID)",
+    btn_topup_method: "Send top-up request — send payment to {method} {num}",
+    topup_note_method: "Send the payment to {method} {num}, then write the TID here. Your balance will only increase after the owner verifies the TID and approves it — a fake TID gives no balance.",
+    support_whatsapp: "WhatsApp support",
+    push_title: "Notifications (push)",
+    push_subscribed: "Push notifications: ON",
+    push_not_subscribed: "Push notifications: OFF",
+    push_not_supported: "Push notifications are not supported on this device/browser.",
+    push_enable: "Turn on push notifications",
+    push_disable: "Turn off push notifications",
+    push_denied: "Notifications are blocked — allow them in your browser/phone settings.",
+    agreed_fare_label: "Agreed fare",
+    chat_unread: "{n} new",
+    gps_pickup_failed: "GPS pickup failed — using {place} as pickup instead.",
+    nav_external_gmaps: "Open in Google Maps",
+    nav_external_osm: "Open in OpenStreetMap",
+    settings_title: "Settings",
   },
   ur: {
     app_name: "چونیاں رائیڈ", tagline: "چونیاں • پتوکی • قصور • لاہور",
@@ -296,6 +357,67 @@ const STRINGS = {
     docs_checklist_ok: "✓",
     docs_checklist_no: "✗",
     pilot_only_note: "پائلٹ مرحلہ: صرف چونیاں شہر کی رائیڈز — بین شہر رائیڈز ابھی بند ہیں۔",
+    // v2.3 — request cards, GPS states, calls, complaints, top-up picker, push
+    new_request: "نئی رائیڈ درخواست",
+    offer_expires_in: "{time} میں ختم ہوگی",
+    countdown_expired: "ختم ہو گئی",
+    pickup_dist: "{km} کلومیٹر دور",
+    pickup_eta: "تقریباً {min} منٹ",
+    estimated_badge: "اندازاً",
+    trip_duration: "{km} کلومیٹر • تقریباً {min} منٹ",
+    more_requests: "{n} مزید درخواستیں قریب ہیں",
+    no_my_offer: "اس رائیڈ پر آپ کی کوئی زیر التوا پیشکش نہیں۔",
+    gps_last_update: "جی پی ایس اپ ڈیٹ {time}",
+    gps_accuracy: "±{m} میٹر",
+    gps_off_banner: "لوکیشن بند ہے — درخواستیں لینے کے لیے جی پی ایس آن کریں۔",
+    gps_denied_banner: "لوکیشن کی اجازت نہیں ملی — فون کی سیٹنگز میں لوکیشن کی اجازت دیں۔",
+    gps_weak_banner: "جی پی ایس سگنل کمزور ہے — بہتر سگنل کے لیے باہر جائیں۔",
+    gps_retry: "دوبارہ کوشش کریں",
+    gps_settings_hint: "فون کی سیٹنگز → لوکیشن کھولیں → چونیاں رائیڈ کو اجازت دیں۔",
+    call_btn: "📞 کال کریں",
+    call_incoming: "کال آ رہی ہے…",
+    call_accept: "کال قبول کریں",
+    call_reject: "مسترد کریں",
+    call_mute: "خاموش کریں",
+    call_unmute: "آواز کھولیں",
+    call_end: "کال ختم کریں",
+    call_no_answer: "کوئی جواب نہیں — دوسرے شخص نے کال نہیں اٹھائی۔",
+    call_ended: "کال ختم ہو گئی۔",
+    call_connecting: "کال ہو رہی ہے…",
+    call_in_call: "کال جاری ہے",
+    call_failed: "کال شروع نہیں ہو سکی — مائیک کی اجازت دیکھ کر دوبارہ کوشش کریں۔",
+    call_only_active: "کال صرف فعال رائیڈ کے دوران ہو سکتی ہے۔",
+    nav_pickup: "پک اپ تک جائیں",
+    nav_dest: "منزل تک جائیں",
+    nav_route_direct: "سیدھا راستہ (اندازاً — سڑک کا فاصلہ نہیں)",
+    nav_route_road: "سڑک کا راستہ",
+    nav_osrm_failed: "سڑک کا راستہ نہیں ملا — سیدھی لکیر دکھائی جا رہی ہے۔",
+    complaint_title: "اس رائیڈ کی شکایت کریں",
+    complaint_ph: "مسئلہ بتائیں…",
+    complaint_btn: "شکایت بھیجیں",
+    complaint_sent: "شکایت بھیج دی گئی — مالک جائزہ لے گا۔",
+    complaint_enter: "پہلے مسئلہ لکھیں۔",
+    topup_method: "ادائیگی کا طریقہ",
+    method_jazzcash: "جاز کیش",
+    method_sadapay: "سدا پے",
+    sadapay_not_set: "Sadapay number abhi set nahi — owner se rabta karein",
+    topup_tid_ph_sadapay: "سدا پے ٹی آئی ڈی (ٹرانزیکشن آئی ڈی)",
+    btn_topup_method: "ٹاپ اپ درخواست بھیجیں — {method} {num} پر ادائیگی بھیجیں",
+    topup_note_method: "{method} {num} پر ادائیگی بھیجیں، پھر ٹی آئی ڈی یہاں لکھیں۔ بیلنس تب ہی بڑھے گا جب مالک ٹی آئی ڈی کی تصدیق کر کے منظور کرے گا — جعلی ٹی آئی ڈی سے بیلنس نہیں ملتا۔",
+    support_whatsapp: "واٹس ایپ مدد",
+    push_title: "اطلاعات (پش)",
+    push_subscribed: "پش اطلاعات: آن",
+    push_not_subscribed: "پش اطلاعات: آف",
+    push_not_supported: "اس ڈیوائس/براؤزر پر پش اطلاعات نہیں چلتیں۔",
+    push_enable: "پش اطلاعات آن کریں",
+    push_disable: "پش اطلاعات آف کریں",
+    push_denied: "اطلاعات بلاک ہیں — براؤزر/فون کی سیٹنگز میں اجازت دیں۔",
+    agreed_fare_label: "طے شدہ کرایہ",
+    chat_unread: "{n} نئے",
+    gps_pickup_failed: "جی پی ایس پک اپ ناکام — {place} کو پک اپ بنایا گیا۔",
+    nav_external_gmaps: "گوگل میپس میں کھولیں",
+    nav_external_osm: "اوپن اسٹریٹ میپ میں کھولیں",
+    settings_title: "سیٹنگز",
   },
 };
 
@@ -326,6 +448,8 @@ const NOTIF_TEMPLATES = {
     doc_approved: { title: "Document approved", body: "Your {doc} was approved." },
     doc_rejected: { title: "Document rejected", body: "Your {doc} was rejected. Please re-upload." },
     sos_alert: { title: "🚨 SOS ALERT — Ride #{ride}", body: "Emergency! {message}" },
+    new_ride_request: { title: "New ride request", body: "Ride #{ride_id} — {pickup} → {destination} ({vehicle_type}), Rs {proposed_fare}." },
+    scheduled_ride_reminder: { title: "Ride in 30 minutes", body: "Your scheduled ride #{ride} — {pickup} → {destination} — is coming up in 30 minutes." },
   },
   ur: {
     offer_received: { title: "رائڈ #{ride} پر نئی پیشکش", body: "{driver} نے روپے {fare} کی پیشکش کی۔" },
@@ -349,6 +473,8 @@ const NOTIF_TEMPLATES = {
     doc_approved: { title: "دستاویز منظور", body: "آپ کی {doc} منظور ہو گئی۔" },
     doc_rejected: { title: "دستاویز مسترد", body: "آپ کی {doc} مسترد ہو گئی۔ براہ کرم دوبارہ اپ لوڈ کریں۔" },
     sos_alert: { title: "🚨 SOS الرٹ — رائیڈ #{ride}", body: "ایمرجنسی! {message}" },
+    new_ride_request: { title: "نئی رائیڈ درخواست", body: "رائڈ #{ride_id} — {pickup} سے {destination} ({vehicle_type})، روپے {proposed_fare}۔" },
+    scheduled_ride_reminder: { title: "30 منٹ میں رائیڈ", body: "آپ کی شیڈول رائیڈ #{ride} — {pickup} سے {destination} — 30 منٹ میں ہے۔" },
   },
 };
 
@@ -364,6 +490,8 @@ function setLang(l) {
   LANG = l;
   localStorage.setItem("cr_lang", l);
   document.documentElement.lang = l === "ur" ? "ur" : "en";
+  // v2.3 RTL: Urdu mirrors the whole layout ([dir="rtl"] rules in style.css).
+  document.documentElement.dir = l === "ur" ? "rtl" : "ltr";
   applyI18n();
 }
 function applyI18n() {
@@ -382,6 +510,7 @@ function initLangToggle() {
   $$(".lang-opt").forEach((el) => el.addEventListener("click", () => setLang(el.dataset.lang)));
   $$(".lang-toggle").forEach((el) => el.addEventListener("click", () => setLang(LANG === "en" ? "ur" : "en")));
   document.documentElement.lang = LANG === "ur" ? "ur" : "en";
+  document.documentElement.dir = LANG === "ur" ? "rtl" : "ltr";
 }
 
 // ---------- Toast (replaces every alert()) ----------
@@ -452,6 +581,14 @@ const ERR_MAP = {
   "Confirm cash received from the rider first — a trip cannot be completed without it": { en: "Confirm cash received from the rider first — a trip cannot be completed without it.", ur: "پہلے رائیڈر سے نقد رقم ملنے کی تصدیق کریں — اس کے بغیر سفر مکمل نہیں ہو سکتا۔" },
   "completed ride cannot be cancelled": { en: "A completed ride cannot be cancelled.", ur: "مکمل شدہ رائیڈ منسوخ نہیں ہو سکتی۔" },
   "offer not found or no longer pending": { en: "Offer not found or no longer pending.", ur: "آفر نہیں ملی یا اب زیرِ التوا نہیں ہے۔" },
+  // v2.3
+  "offer has expired": { en: "This offer has expired.", ur: "یہ پیشکش ختم ہو گئی۔" },
+  "offer is no longer pending": { en: "Offer is no longer pending.", ur: "آفر اب زیرِ التوا نہیں ہے۔" },
+  "Sirf driver apni offer accept kar sakta hai": { en: "Only a driver can accept their own offer.", ur: "صرف ڈرائیور ہی اپنی آفر قبول کر سکتا ہے۔" },
+  "Sirf apni offer accept kar sakte hain": { en: "You can only accept your own offer.", ur: "آپ صرف اپنی آفر قبول کر سکتے ہیں۔" },
+  "calls are only available to the rider or assigned driver of an active ride": { en: "Calls are only available to the rider or assigned driver of an active ride.", ur: "کال صرف فعال رائیڈ کے رائیڈر یا مقررہ ڈرائیور کے لیے ہے۔" },
+  "document has expired — ask the driver to re-upload": { en: "Document has expired — ask the driver to re-upload.", ur: "دستاویز کی مدت ختم ہو گئی — ڈرائیور سے دوبارہ اپ لوڈ کرنے کو کہیں۔" },
+  "expires_at must be a future date": { en: "Expiry must be a future date.", ur: "ختم ہونے کی تاریخ مستقبل کی ہونی چاہیے۔" },
   "fare must be more than 0": { en: "Fare must be more than 0.", ur: "کرایہ 0 سے زیادہ ہونا چاہیے۔" },
   "scheduled time must be in the future": { en: "Scheduled time must be in the future.", ur: "طے شدہ وقت مستقبل میں ہونا چاہیے۔" },
   "you can only book up to 7 days ahead": { en: "You can only book up to 7 days ahead.", ur: "آپ صرف 7 دن آگے تک بک کر سکتے ہیں۔" },
@@ -682,3 +819,342 @@ function registerServiceWorker() {
   }
 }
 document.addEventListener("DOMContentLoaded", registerServiceWorker);
+
+// ---------- v2.3 shared helpers ----------
+// Countdown from the SERVER clock: remaining = expires_at - serverNow,
+// where serverNow = server_time_ms + (Date.now() - fetchedAtMs).
+function fmtCountdown(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+function serverRemainingMs(expiresAt, serverTimeMs, fetchedAtMs) {
+  if (expiresAt == null || serverTimeMs == null) return null;
+  return expiresAt - (serverTimeMs + (Date.now() - fetchedAtMs));
+}
+function fmtClockTime(ts) {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+// WhatsApp link for a Pakistani number (03XX... -> 92...). Empty -> "".
+function waLink(number) {
+  const d = String(number || "").replace(/\D/g, "");
+  if (!d) return "";
+  return "https://wa.me/" + (d.startsWith("0") ? "92" + d.slice(1) : d);
+}
+// Support contact block from settings: phone + WhatsApp link, or "not set".
+// Never invents a number.
+function renderSupportInfo(el, settings) {
+  if (!el) return;
+  const phone = (settings && settings.support_phone) || "";
+  const wa = (settings && settings.support_whatsapp) || "";
+  const phoneLine = phone
+    ? `<br>${escapeHtml(t("support_owner"))}: <a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>`
+    : `<br>${escapeHtml(t("support_owner"))}: ${escapeHtml(t("not_set"))}`;
+  const waLine = wa
+    ? `<br>${escapeHtml(t("support_whatsapp"))}: <a target="_blank" rel="noopener" href="${escapeHtml(waLink(wa))}">${escapeHtml(wa)}</a>`
+    : `<br>${escapeHtml(t("support_whatsapp"))}: ${escapeHtml(t("not_set"))}`;
+  el.innerHTML = `<p>${escapeHtml(t("police"))}: <a href="tel:15"><strong>15</strong></a> &nbsp;•&nbsp; ${escapeHtml(t("rescue"))}: <a href="tel:1122"><strong>1122</strong></a>${phoneLine}${waLine}</p>`;
+}
+
+// ---------- Client error reporting (v2.3, POST /api/client-error) ----------
+// Only when logged in; max 1 report per distinct message per page load;
+// a reporting failure must never break the app.
+const __clientErrorSeen = new Set();
+let __crLoggedIn = false;
+function markClientLoggedIn() { __crLoggedIn = true; }
+function reportClientError(message, stack) {
+  if (!__crLoggedIn || !message) return;
+  const msg = String(message).slice(0, 2000);
+  if (__clientErrorSeen.has(msg)) return;
+  __clientErrorSeen.add(msg);
+  try {
+    fetch("/api/client-error", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: msg, stack: String(stack || "").slice(0, 4000), url: location.href }),
+    }).catch(() => {});
+  } catch {}
+}
+window.addEventListener("error", (e) => {
+  reportClientError(e.message || "Uncaught error", e.error && e.error.stack ? e.error.stack : "");
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e.reason;
+  reportClientError("Unhandled rejection: " + (r && r.message ? r.message : String(r)), r && r.stack ? r.stack : "");
+});
+
+// ---------- Complaint (v2.3, POST /api/complaints) ----------
+async function postComplaint(rideId, message) {
+  return api("/api/complaints", { method: "POST", body: JSON.stringify({ ride_id: rideId, message }) });
+}
+
+// ---------- Top-up method picker (v2.3 — JazzCash + Sadapay ONLY) ----------
+// Renders the picker into `box` and returns { getMethod, isBlocked, refresh }.
+// onChange(method, number, blocked) fires on every selection change.
+// Sadapay with an empty number blocks submit and shows the owner-contact
+// note; no number is ever invented. Only these two methods exist.
+function initTopupPicker(box, settings, onChange) {
+  if (!box) return { getMethod: () => "JazzCash", isBlocked: () => false, refresh: () => {} };
+  let method = "JazzCash";
+  const state = {
+    getMethod: () => method,
+    isBlocked: () => method === "Sadapay" && !((settings && settings.sadapay_number) || "").trim(),
+    refresh: (s) => { if (s) settings = s; render(); },
+  };
+  function render() {
+    const jc = (settings && settings.jazzcash_number) || "";
+    const sp = (settings && settings.sadapay_number) || "";
+    const num = method === "JazzCash" ? jc : sp;
+    const blocked = state.isBlocked();
+    box.innerHTML = `
+      <label>${escapeHtml(t("topup_method"))}</label>
+      <div class="v23-methods" role="group" aria-label="${escapeHtml(t("topup_method"))}">
+        <button type="button" class="v23-method${method === "JazzCash" ? " active" : ""}" data-method="JazzCash">${escapeHtml(t("method_jazzcash"))}</button>
+        <button type="button" class="v23-method${method === "Sadapay" ? " active" : ""}" data-method="Sadapay">${escapeHtml(t("method_sadapay"))}</button>
+      </div>
+      <p class="muted v23-method-note">${blocked ? escapeHtml(t("sadapay_not_set")) : escapeHtml(t("topup_note_method", { method: t(method === "JazzCash" ? "method_jazzcash" : "method_sadapay"), num: num || t("not_set") }))}</p>`;
+    $$("[data-method]", box).forEach((b) => b.addEventListener("click", () => {
+      method = b.dataset.method;
+      render();
+      if (typeof onChange === "function") onChange(method, method === "JazzCash" ? jc : sp, state.isBlocked());
+    }));
+    if (typeof onChange === "function") onChange(method, num, blocked);
+  }
+  render();
+  return state;
+}
+
+// ---------- Web Push (v2.3, VAPID) ----------
+function urlBase64ToUint8Array(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const b = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+async function pushStatus() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return { supported: false, subscribed: false };
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    return { supported: true, subscribed: !!sub, endpoint: sub ? sub.endpoint : null };
+  } catch { return { supported: true, subscribed: false }; }
+}
+async function pushSubscribe() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return { supported: false, subscribed: false };
+  if (Notification.permission === "denied") throw new Error(t("push_denied"));
+  const reg = await navigator.serviceWorker.ready;
+  const { public_key } = await api("/api/push/public-key");
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(public_key) });
+  const j = sub.toJSON();
+  await api("/api/push/subscribe", { method: "POST", body: JSON.stringify({ endpoint: sub.endpoint, keys: j.keys }) });
+  return { supported: true, subscribed: true, endpoint: sub.endpoint };
+}
+async function pushUnsubscribe() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return { subscribed: false };
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (sub) {
+    try { await api("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch {}
+    try { await sub.unsubscribe(); } catch {}
+  }
+  return { subscribed: false };
+}
+// Renders an honest push toggle into `box`: subscribed / not subscribed /
+// not supported. Re-rendering is cheap — call it from profile renders.
+async function renderPushToggle(box) {
+  if (!box) return;
+  box.innerHTML = `<h3>${escapeHtml(t("push_title"))}</h3><p class="muted">${escapeHtml(t("loading"))}</p>`;
+  let st;
+  try { st = await pushStatus(); } catch { st = { supported: false, subscribed: false }; }
+  if (!st.supported) {
+    box.innerHTML = `<h3>${escapeHtml(t("push_title"))}</h3><p class="muted">${escapeHtml(t("push_not_supported"))}</p>`;
+    return;
+  }
+  box.innerHTML = `<h3>${escapeHtml(t("push_title"))}</h3>
+    <p class="muted" data-push-state>${escapeHtml(st.subscribed ? t("push_subscribed") : t("push_not_subscribed"))}</p>
+    <button type="button" class="secondary" data-push-btn>${escapeHtml(st.subscribed ? t("push_disable") : t("push_enable"))}</button>`;
+  const btn = box.querySelector("[data-push-btn]");
+  const stateEl = box.querySelector("[data-push-state]");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      const cur = await pushStatus();
+      if (cur.subscribed) {
+        await pushUnsubscribe();
+        stateEl.textContent = t("push_not_subscribed");
+        btn.textContent = t("push_enable");
+      } else {
+        await pushSubscribe();
+        stateEl.textContent = t("push_subscribed");
+        btn.textContent = t("push_disable");
+        toast(t("push_subscribed"), "ok");
+      }
+    } catch (e) { toast(e.message, "error"); }
+    finally { btn.disabled = false; }
+  });
+}
+
+// ---------- OSRM route (v2.3, free demo router, best-effort) ----------
+// Returns {coords:[[lat,lng]...], distanceKm, durationMin} or null on any
+// failure. Callers must fall back to a straight line labelled as direct /
+// estimated — never present it as road distance.
+async function fetchOsrmRoute(from, to) {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (!d.routes || !d.routes.length) return null;
+    return {
+      coords: d.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]),
+      distanceKm: Math.round((d.routes[0].distance / 1000) * 10) / 10,
+      durationMin: Math.max(1, Math.round(d.routes[0].duration / 60)),
+    };
+  } catch { return null; }
+}
+function gmapsDirUrl(lat, lng) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(lat + "," + lng)}`;
+}
+function osmDirUrl(lat, lng) {
+  return `https://www.openstreetmap.org/directions?to=${encodeURIComponent(lat + "," + lng)}`;
+}
+
+// ---------- In-app voice call (v2.3, WebRTC P2P — STUN only, NO TURN) ----------
+// Signalling via POST/GET /api/rides/:id/call-signal (kinds offer/answer/
+// ice/end). No phone numbers anywhere. One controller per active ride.
+// opts: { rideId, myRole: "rider"|"driver", myUserId, mount (audio element
+// parent), onState(state, info) } — states: idle, calling, incoming,
+// in-call, ended, no-answer, failed. Caller polls for answer+ice; callee
+// polls for offer. startPolling() must run while the ride screen is open
+// so incoming calls are detected; stopPolling() when it closes.
+function createRideCall(opts) {
+  const { rideId, myRole, myUserId, mount, onState } = opts;
+  const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
+  let pc = null, localStream = null, remoteAudio = null;
+  let lastSignalId = 0, pollTimer = null, noAnswerTimer = null;
+  let state = "idle", remoteOffer = null, muted = false;
+  function setState(s, info) {
+    state = s;
+    if (typeof onState === "function") { try { onState(s, info || {}); } catch {} }
+  }
+  function ensureAudio() {
+    if (!remoteAudio) {
+      remoteAudio = document.createElement("audio");
+      remoteAudio.autoplay = true;
+      remoteAudio.playsInline = true;
+      (mount || document.body).appendChild(remoteAudio);
+    }
+    return remoteAudio;
+  }
+  function makePc() {
+    const p = new RTCPeerConnection({ iceServers: ICE });
+    p.onicecandidate = (e) => {
+      if (e.candidate) postSignal("ice", { candidate: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate }).catch(() => {});
+    };
+    p.ontrack = (e) => { const a = ensureAudio(); a.srcObject = e.streams[0]; };
+    return p;
+  }
+  async function postSignal(kind, payload) {
+    return api(`/api/rides/${rideId}/call-signal`, { method: "POST", body: JSON.stringify({ kind, payload }) });
+  }
+  async function pollOnce() {
+    let d;
+    try { d = await api(`/api/rides/${rideId}/call-signal?after=${lastSignalId}`); } catch { return; }
+    for (const s of d.signals || []) {
+      lastSignalId = Math.max(lastSignalId, s.id);
+      if (s.sender_role === myRole) continue; // ignore my own signals
+      await handleSignal(s);
+    }
+  }
+  async function handleSignal(s) {
+    try {
+      if (s.kind === "offer" && state === "idle") {
+        remoteOffer = s.payload;
+        setState("incoming");
+      } else if (s.kind === "answer" && state === "calling" && pc) {
+        clearTimeout(noAnswerTimer); noAnswerTimer = null;
+        await pc.setRemoteDescription(new RTCSessionDescription(s.payload));
+        setState("in-call");
+      } else if (s.kind === "ice" && pc) {
+        try { await pc.addIceCandidate(new RTCIceCandidate(s.payload.candidate || s.payload)); } catch {}
+      } else if (s.kind === "end") {
+        endLocal("ended");
+      }
+    } catch {}
+  }
+  async function startCall() {
+    if (state !== "idle") return;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch { setState("failed"); return; }
+    pc = makePc();
+    localStream.getTracks().forEach((tr) => pc.addTrack(tr, localStream));
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    try { await postSignal("offer", { type: offer.type, sdp: offer.sdp }); } catch { cleanup(); setState("failed"); return; }
+    setState("calling");
+    startPolling();
+    noAnswerTimer = setTimeout(() => {
+      if (state === "calling") { endCall("no-answer"); }
+    }, 30000);
+  }
+  async function acceptIncoming() {
+    if (state !== "incoming" || !remoteOffer) return;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch { setState("failed"); return; }
+    pc = makePc();
+    localStream.getTracks().forEach((tr) => pc.addTrack(tr, localStream));
+    await pc.setRemoteDescription(new RTCSessionDescription(remoteOffer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    try { await postSignal("answer", { type: answer.type, sdp: answer.sdp }); } catch { cleanup(); setState("failed"); return; }
+    setState("in-call");
+  }
+  async function rejectIncoming() {
+    try { await postSignal("end", {}); } catch {}
+    remoteOffer = null;
+    setState("idle");
+  }
+  function toggleMute() {
+    muted = !muted;
+    if (localStream) localStream.getAudioTracks().forEach((tr) => { tr.enabled = !muted; });
+    return muted;
+  }
+  function cleanup() {
+    clearTimeout(noAnswerTimer); noAnswerTimer = null;
+    if (pc) { try { pc.close(); } catch {} pc = null; }
+    if (localStream) { localStream.getTracks().forEach((tr) => { try { tr.stop(); } catch {} }); localStream = null; }
+    if (remoteAudio) { try { remoteAudio.srcObject = null; } catch {} }
+    remoteOffer = null;
+  }
+  function endLocal(finalState) {
+    cleanup();
+    setState(finalState || "ended");
+  }
+  async function endCall(finalState) {
+    try { await postSignal("end", {}); } catch {}
+    endLocal(finalState || "ended");
+  }
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(pollOnce, 2000);
+    pollOnce();
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  function reset() {
+    stopPolling();
+    cleanup();
+    lastSignalId = 0;
+    setState("idle");
+  }
+  return {
+    startCall, acceptIncoming, rejectIncoming, endCall, toggleMute,
+    startPolling, stopPolling, reset,
+    getState: () => state, isMuted: () => muted,
+    setLastSignalId: (id) => { lastSignalId = id; },
+  };
+}

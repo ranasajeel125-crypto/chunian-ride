@@ -30,6 +30,14 @@ import {
   fareFor,
   platformTake,
   distanceBetween,
+  haversineKm,
+  OFFER_TTL_MS,
+  CALL_SIGNAL_TTL_MS,
+  computePickupDistance,
+  expireStaleOffers,
+  runScheduledReminders,
+  ensureVapidKeys,
+  getVapidPublicKey,
   usingTurso,
   withTx,
   writeAudit,
@@ -136,7 +144,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "2.2.0", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.3.0", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 // App update check (v2.1): single source of truth for the latest APK.
@@ -513,9 +521,12 @@ app.post("/api/drivers/:id/location", requireAuth, requireSelfOrAdmin((req) => r
 });
 
 // Driver sees open requests for their vehicle type, with rider rating, BEFORE accepting.
+// v2.3: stale offers are expired first (lazy sweep); each request carries
+// the real pickup distance/ETA from this driver's last GPS fix.
 app.get("/api/drivers/:id/requests", requireAuth, requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [num(req.params.id)] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
+  await expireStaleOffers(client);
   const rows = await client.execute({
     sql: `SELECT r.*, u.name AS rider_name, u.rating AS rider_rating, u.rating_count AS rider_rating_count
           FROM rides r JOIN users u ON u.id = r.rider_id
@@ -523,7 +534,8 @@ app.get("/api/drivers/:id/requests", requireAuth, requireSelfOrAdmin((req) => re
           ORDER BY r.created_at DESC`,
     args: [d.rows[0].vehicle_type],
   });
-  res.json({ requests: rows.rows });
+  const requests = rows.rows.map((r) => ({ ...r, ...computePickupDistance(d.rows[0], r) }));
+  res.json({ requests, server_time_ms: now() });
 });
 
 // Shared top-up request creator (driver + rider — same manual JazzCash flow).
@@ -637,12 +649,21 @@ app.get("/api/drivers/:id/earnings", requireAuth, requireSelfOrAdmin((req) => re
 // fare carries the discount. promo uses increment only on a successful
 // booking (inside the same transaction, guarded against max_uses races).
 app.post("/api/rides", requireAuth, async (req, res) => {
-  const { rider_id, pickup, destination, vehicle, proposed_fare, distance_km, scheduled_for, promo_code } = req.body || {};
+  const { rider_id, pickup, destination, vehicle, proposed_fare, distance_km, scheduled_for, promo_code, pickup_lat, pickup_lng } = req.body || {};
   if (req.auth.ownerType !== "user" || req.auth.role !== "rider" || req.auth.ownerId !== num(rider_id)) {
     return res.status(403).json({ error: "Sirf logged-in rider apni ride book kar sakta hai" });
   }
   if (!rider_id || !pickup || !destination || !VEHICLES.includes(vehicle)) {
     return res.status(400).json({ error: "rider_id, pickup, destination and vehicle are required" });
+  }
+  // Optional rider GPS pickup point (v2.3): stored on the ride and used for
+  // the real pickup distance instead of the place-table coordinates.
+  let plat = null, plng = null;
+  if (pickup_lat != null || pickup_lng != null) {
+    plat = Number(pickup_lat); plng = Number(pickup_lng);
+    if (!Number.isFinite(plat) || !Number.isFinite(plng) || plat < -90 || plat > 90 || plng < -180 || plng > 180) {
+      return res.status(400).json({ error: "valid pickup_lat/pickup_lng required" });
+    }
   }
   // Pilot lock (v2.2): Chunian City only while pilot mode is ON.
   const s0 = await getSettings();
@@ -681,8 +702,8 @@ app.post("/api/rides", requireAuth, async (req, res) => {
   try {
     rideId = await withTx(async (tx) => {
       const r = await tx.execute({
-        sql: "INSERT INTO rides(rider_id, pickup, destination, distance_km, distance_estimated, vehicle_type, suggested_fare, proposed_fare, scheduled_for, promo_code, discount_amount, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?)",
-        args: [num(rider_id), pickup, destination, km, estimated ? 1 : 0, vehicle, suggested, proposed, sched, promo ? promo.code : "", discount, now()],
+        sql: "INSERT INTO rides(rider_id, pickup, destination, distance_km, distance_estimated, vehicle_type, suggested_fare, proposed_fare, scheduled_for, promo_code, discount_amount, pickup_lat, pickup_lng, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?)",
+        args: [num(rider_id), pickup, destination, km, estimated ? 1 : 0, vehicle, suggested, proposed, sched, promo ? promo.code : "", discount, plat, plng, now()],
       });
       const id = Number(r.lastInsertRowid);
       if (promo) {
@@ -714,11 +735,30 @@ app.post("/api/rides", requireAuth, async (req, res) => {
     args: [vehicle],
   });
   const offerFare = Math.max(suggested, proposed);
+  // One timestamp for both columns so expires_at - created_at is exactly TTL.
+  const offerT0 = now();
+  const offerExpiresAt = offerT0 + OFFER_TTL_MS;
   for (const [i, drv] of drivers.rows.entries()) {
     await client.execute({
-      sql: "INSERT INTO offers(ride_id, driver_id, fare, eta_min, created_at) VALUES (?, ?, ?, ?, ?)",
-      args: [rideId, drv.user_id, offerFare, 5 + i * 3, now()],
+      sql: "INSERT INTO offers(ride_id, driver_id, fare, eta_min, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [rideId, drv.user_id, offerFare, 5 + i * 3, offerExpiresAt, offerT0],
     });
+  }
+  // v2.3: every eligible driver gets ONE new_ride_request notification for
+  // this ride (dedupe: an existing notification of this type + ride_id for
+  // that driver means "already notified" — a re-read never re-notifies).
+  for (const drv of drivers.rows) {
+    const ex = await client.execute({
+      sql: "SELECT 1 AS x FROM notifications WHERE user_id = ? AND role = 'user' AND type = 'new_ride_request' AND ride_id = ? LIMIT 1",
+      args: [Number(drv.user_id), rideId],
+    });
+    if (!ex.rows.length) {
+      await notify(client, {
+        userId: Number(drv.user_id), role: "user", type: "new_ride_request",
+        params: { ride_id: rideId, pickup, destination, vehicle_type: vehicle, proposed_fare: proposed },
+        rideId,
+      });
+    }
   }
   // Scheduled ride: the rider gets a confirmation, and every online approved
   // driver of this vehicle gets a heads-up (they see it in Requests too).
@@ -736,6 +776,12 @@ app.get("/api/rides/:id", requireAuth, async (req, res) => {
   const ride = await loadRideOr404(req, res);
   if (!ride) return;
   if (!canViewRide(ride, req.auth)) return res.status(403).json({ error: "Ye ride aap ki nahi hai" });
+  // v2.3: lazy sweep — past-due pending offers on this ride become
+  // 'expired' before the client sees them; also runs the scheduled-ride
+  // reminder sweep (guarded, best-effort) so a due reminder is not stuck
+  // waiting for the 5-minute interval.
+  await expireStaleOffers(client, num(req.params.id));
+  await runScheduledReminders();
   const offers = await client.execute({
     sql: `SELECT o.*, u.name AS driver_name, u.rating AS driver_rating, u.rating_count AS driver_rating_count, d.vehicle_model, d.plate
           FROM offers o JOIN users u ON u.id = o.driver_id JOIN drivers d ON d.user_id = o.driver_id
@@ -752,10 +798,21 @@ app.get("/api/rides/:id", requireAuth, async (req, res) => {
     const dl = await client.execute({ sql: "SELECT lat, lng, loc_updated_at FROM drivers WHERE user_id = ?", args: [num(ride.driver_id)] });
     if (dl.rows.length) driverLocation = { lat: dl.rows[0].lat, lng: dl.rows[0].lng, updated_at: dl.rows[0].loc_updated_at };
   }
-  res.json({ ride, offers: visibleOffers, driver_location: driverLocation });
+  // v2.3: real pickup distance for a driver caller (nulls for anyone else);
+  // server_time_ms lets the client count the offer-expiry countdown down
+  // from the server clock instead of the phone clock.
+  let pickupDistance = { pickup_distance_km: null, pickup_distance_estimated: true, pickup_eta_min: null };
+  if (req.auth.ownerType === "user") {
+    const dRow = await client.execute({ sql: "SELECT lat, lng, loc_updated_at FROM drivers WHERE user_id = ?", args: [req.auth.ownerId] });
+    if (dRow.rows.length) pickupDistance = computePickupDistance(dRow.rows[0], ride);
+  }
+  res.json({ ride, offers: visibleOffers, driver_location: driverLocation, server_time_ms: now(), ...pickupDistance });
 });
 
 // ---- In-ride chat (text only, rider <-> driver of this ride; no phone numbers) ----
+// v2.3: GET supports ?after=<id>&limit=50 (default 50) for polling, marks
+// the other party's messages as read (read_at) on fetch, and returns the
+// caller's unread_count (computed BEFORE marking). Admins may read only.
 app.post("/api/rides/:id/messages", requireAuth, async (req, res) => {
   const { sender_id, sender_role, message } = req.body || {};
   const text = String(message || "").trim();
@@ -777,11 +834,143 @@ app.get("/api/rides/:id/messages", requireAuth, async (req, res) => {
   const ride = await loadRideOr404(req, res);
   if (!ride) return;
   if (!isRideParticipant(ride, req.auth)) return res.status(403).json({ error: "only the rider or driver of this ride can read this chat" });
+  const after = num(req.query.after, 0);
+  const limit = Math.max(1, Math.min(50, num(req.query.limit, 50)));
+  // Unread count for the caller: the other party's messages not yet read.
+  // Admins are read-only observers — their unread count is always 0.
+  let unreadCount = 0;
+  if (req.auth.ownerType === "user") {
+    const u = await client.execute({
+      sql: "SELECT COUNT(*) AS n FROM ride_messages WHERE ride_id = ? AND sender_id != ? AND read_at IS NULL",
+      args: [num(req.params.id), req.auth.ownerId],
+    });
+    unreadCount = Number(u.rows[0].n);
+    await client.execute({
+      sql: "UPDATE ride_messages SET read_at = ? WHERE ride_id = ? AND sender_id != ? AND read_at IS NULL",
+      args: [now(), num(req.params.id), req.auth.ownerId],
+    });
+  }
   const rows = await client.execute({
-    sql: "SELECT id, sender_role, sender_id, message, created_at FROM ride_messages WHERE ride_id = ? ORDER BY created_at ASC LIMIT 50",
-    args: [num(req.params.id)],
+    sql: "SELECT id, sender_role, sender_id, message, created_at, read_at FROM ride_messages WHERE ride_id = ? AND id > ? ORDER BY created_at ASC LIMIT ?",
+    args: [num(req.params.id), after, limit],
   });
-  res.json({ messages: rows.rows });
+  res.json({ messages: rows.rows, unread_count: unreadCount });
+});
+
+// ---- WebRTC call signalling (v2.3, server only — no media, no phone numbers) ----
+// The matched rider + assigned driver exchange SDP/ICE through these rows
+// while the ride is ACTIVE (accepted/ongoing). Signals older than 10
+// minutes for the ride are pruned on every new signal.
+const CALL_SIGNAL_KINDS = ["offer", "answer", "ice", "end"];
+const CALL_ACTIVE_STATUSES = ["accepted", "ongoing"];
+function canCallOnRide(ride, auth) {
+  if (!auth || auth.ownerType !== "user") return false;
+  if (ride.rider_id !== auth.ownerId && ride.driver_id !== auth.ownerId) return false;
+  return CALL_ACTIVE_STATUSES.includes(ride.status);
+}
+app.post("/api/rides/:id/call-signal", requireAuth, async (req, res) => {
+  const { kind, payload } = req.body || {};
+  if (!CALL_SIGNAL_KINDS.includes(kind)) return res.status(400).json({ error: "kind must be offer, answer, ice or end" });
+  if (payload == null || typeof payload !== "object" || Array.isArray(payload)) {
+    return res.status(400).json({ error: "payload must be an object" });
+  }
+  const payloadStr = JSON.stringify(payload);
+  if (payloadStr.length > 8000) return res.status(400).json({ error: "payload is too large" });
+  const ride = await loadRideOr404(req, res);
+  if (!ride) return;
+  if (!canCallOnRide(ride, req.auth)) return res.status(403).json({ error: "calls are only available to the rider or assigned driver of an active ride" });
+  await client.execute({
+    sql: "DELETE FROM call_signals WHERE ride_id = ? AND created_at < ?",
+    args: [num(req.params.id), now() - CALL_SIGNAL_TTL_MS],
+  });
+  const ins = await client.execute({
+    sql: "INSERT INTO call_signals(ride_id, sender_id, sender_role, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    args: [num(req.params.id), req.auth.ownerId, req.auth.role || "", kind, payloadStr, now()],
+  });
+  res.json({ signal_id: Number(ins.lastInsertRowid) });
+});
+app.get("/api/rides/:id/call-signal", requireAuth, async (req, res) => {
+  const after = num(req.query.after, 0);
+  const ride = await loadRideOr404(req, res);
+  if (!ride) return;
+  if (!canCallOnRide(ride, req.auth)) return res.status(403).json({ error: "calls are only available to the rider or assigned driver of an active ride" });
+  const rows = await client.execute({
+    sql: "SELECT id, ride_id, sender_id, sender_role, kind, payload, created_at FROM call_signals WHERE ride_id = ? AND id > ? ORDER BY id ASC LIMIT 100",
+    args: [num(req.params.id), after],
+  });
+  res.json({
+    signals: rows.rows.map((s) => ({
+      id: s.id, ride_id: s.ride_id, sender_id: s.sender_id, sender_role: s.sender_role,
+      kind: s.kind, payload: JSON.parse(s.payload || "{}"), created_at: s.created_at,
+    })),
+  });
+});
+
+// ---- Web Push (v2.3, VAPID — free, no Firebase) ----
+// User sessions only: push_subscriptions.user_id is a users.id. The public
+// key is safe to hand out (the private key never leaves the server).
+app.get("/api/push/public-key", requireAuth, async (req, res) => {
+  const key = await getVapidPublicKey();
+  if (!key) return res.status(503).json({ error: "push is not configured" });
+  res.json({ public_key: key });
+});
+app.post("/api/push/subscribe", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user") return res.status(403).json({ error: "Sirf user account push subscribe kar sakta hai" });
+  const { endpoint, keys } = req.body || {};
+  const ep = String(endpoint || "");
+  // Web Push endpoints are always https: web-push sends over TLS even for
+  // an http:// URL (it fails with an SSL error), so only https is accepted.
+  if (!ep.startsWith("https://") || !keys || typeof keys.p256dh !== "string" || typeof keys.auth !== "string" || !keys.p256dh || !keys.auth) {
+    return res.status(400).json({ error: "endpoint (https) and keys.p256dh + keys.auth are required" });
+  }
+  // web-push rejects anything else at send time: p256dh must decode to a
+  // 65-byte P-256 point and auth to 16 bytes. Reject garbage up front so a
+  // bad subscription can never be stored.
+  let p256, au;
+  try { p256 = Buffer.from(keys.p256dh, "base64url"); au = Buffer.from(keys.auth, "base64url"); } catch { p256 = null; au = null; }
+  if (!p256 || p256.length !== 65 || !au || au.length !== 16) {
+    return res.status(400).json({ error: "keys.p256dh must be a 65-byte base64url key and keys.auth a 16-byte base64url secret" });
+  }
+  await client.execute({
+    sql: "INSERT INTO push_subscriptions(user_id, endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth",
+    args: [req.auth.ownerId, ep, keys.p256dh, keys.auth, now()],
+  });
+  res.json({ ok: true, subscribed: true });
+});
+app.post("/api/push/unsubscribe", requireAuth, async (req, res) => {
+  if (req.auth.ownerType !== "user") return res.status(403).json({ error: "Sirf user account push unsubscribe kar sakta hai" });
+  const ep = String((req.body || {}).endpoint || "");
+  if (!ep) return res.status(400).json({ error: "endpoint is required" });
+  const r = await client.execute({
+    sql: "DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?",
+    args: [ep, req.auth.ownerId],
+  });
+  res.json({ ok: true, removed: Number(r.rowsAffected) });
+});
+
+// ---- Client error reports (v2.3) ----
+// The app posts JS errors here so the owner can see them. Lengths are
+// capped by truncation (not rejection) except for an empty message.
+app.post("/api/client-error", requireAuth, async (req, res) => {
+  const { message, stack, url, user_agent } = req.body || {};
+  const msg = String(message || "").trim();
+  if (!msg) return res.status(400).json({ error: "message is required" });
+  await client.execute({
+    sql: "INSERT INTO client_errors(user_id, message, stack, url, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    args: [
+      req.auth.ownerType === "user" ? req.auth.ownerId : null,
+      msg.slice(0, 2000),
+      String(stack || "").slice(0, 4000),
+      String(url || "").slice(0, 500),
+      String(user_agent || req.headers["user-agent"] || "").slice(0, 500),
+      now(),
+    ],
+  });
+  res.status(201).json({ ok: true });
+});
+app.get("/api/admin/client-errors", requireAdmin, async (req, res) => {
+  const rows = await client.execute({ sql: "SELECT * FROM client_errors ORDER BY created_at DESC LIMIT 100" });
+  res.json({ client_errors: rows.rows });
 });
 
 app.get("/api/rides", requireAuth, async (req, res) => {
@@ -809,6 +998,17 @@ app.post("/api/rides/:id/offers/:offerId/accept", requireAuth, async (req, res) 
     return res.status(403).json({ error: "Sirf is ride ka rider offer accept kar sakta hai" });
   }
   if (ride.status !== "requested") return res.status(400).json({ error: "ride is no longer open" });
+  // v2.3: past-due offers are expired first — accepting an expired offer
+  // is a 400, not a silent 404.
+  await expireStaleOffers(client, num(req.params.id));
+  const offerAny = await client.execute({
+    sql: "SELECT * FROM offers WHERE id = ? AND ride_id = ?",
+    args: [num(req.params.offerId), num(req.params.id)],
+  });
+  if (!offerAny.rows.length) return res.status(404).json({ error: "offer not found or no longer pending" });
+  if (offerAny.rows[0].status === "expired" || (offerAny.rows[0].expires_at && Number(offerAny.rows[0].expires_at) < now())) {
+    return res.status(400).json({ error: "offer has expired" });
+  }
   const offer = await client.execute({
     sql: "SELECT * FROM offers WHERE id = ? AND ride_id = ? AND status = 'pending'",
     args: [num(req.params.offerId), num(req.params.id)],
@@ -835,6 +1035,63 @@ app.post("/api/rides/:id/offers/:offerId/accept", requireAuth, async (req, res) 
   res.json({ ride_id: num(req.params.id), driver_id: o.driver_id, agreed_fare: o.fare });
 });
 
+// Driver accepts their OWN pending offer (v2.3, P0 fix — the old endpoint
+// was rider-only, so driverAccept() in public/driver.js always got 403).
+// NOTE for the frontend: driver.js must call THIS path, not /accept.
+// One transaction: winning offer accepted, ride assigned, all other pending
+// offers auto-declined, audit + ride-history rows, rider notified. Any
+// second accept (same or another driver) after assignment -> 400.
+app.post("/api/rides/:id/offers/:offerId/accept-driver", requireAuth, async (req, res, next) => {
+  const ride = await loadRideOr404(req, res);
+  if (!ride) return;
+  if (req.auth.ownerType !== "user" || req.auth.role !== "driver") {
+    return res.status(403).json({ error: "Sirf driver apni offer accept kar sakta hai" });
+  }
+  if (ride.status !== "requested") return res.status(400).json({ error: "ride is no longer open" });
+  await expireStaleOffers(client, num(req.params.id));
+  const offerAny = await client.execute({
+    sql: "SELECT * FROM offers WHERE id = ? AND ride_id = ?",
+    args: [num(req.params.offerId), num(req.params.id)],
+  });
+  if (!offerAny.rows.length) return res.status(404).json({ error: "offer not found or no longer pending" });
+  const o = offerAny.rows[0];
+  if (Number(o.driver_id) !== req.auth.ownerId) {
+    return res.status(403).json({ error: "Sirf apni offer accept kar sakte hain" });
+  }
+  if (o.status === "expired" || (o.expires_at && Number(o.expires_at) < now())) {
+    return res.status(400).json({ error: "offer has expired" });
+  }
+  if (o.status !== "pending") return res.status(400).json({ error: "offer is no longer pending" });
+  try {
+    await withTx(async (tx) => {
+      const cur = await tx.execute({ sql: "SELECT status FROM rides WHERE id = ?", args: [num(req.params.id)] });
+      if (!cur.rows.length || cur.rows[0].status !== "requested") throw new Error("ride is no longer open");
+      const oc = await tx.execute({ sql: "SELECT status, expires_at FROM offers WHERE id = ?", args: [o.id] });
+      if (!oc.rows.length || oc.rows[0].status !== "pending") throw new Error("offer is no longer pending");
+      if (oc.rows[0].expires_at && Number(oc.rows[0].expires_at) < Date.now()) throw new Error("offer has expired");
+      await tx.execute({ sql: "UPDATE offers SET status='accepted' WHERE id = ?", args: [o.id] });
+      await tx.execute({ sql: "UPDATE offers SET status='declined' WHERE ride_id = ? AND id != ? AND status='pending'", args: [num(req.params.id), o.id] });
+      await tx.execute({
+        sql: "UPDATE rides SET driver_id = ?, agreed_fare = ?, status = 'accepted' WHERE id = ?",
+        args: [o.driver_id, o.fare, num(req.params.id)],
+      });
+      await writeRideHistory(tx, num(req.params.id), "requested", "accepted", o.driver_id);
+      await writeAudit(tx, {
+        actorId: Number(o.driver_id), actorRole: "driver", action: "driver_accept",
+        targetType: "ride", targetId: num(req.params.id),
+        detail: `Driver #${o.driver_id} accepted own offer Rs ${o.fare} on ride #${req.params.id}`,
+      });
+    });
+  } catch (e) {
+    if (["ride is no longer open", "offer is no longer pending", "offer has expired"].includes(e.message)) {
+      return res.status(400).json({ error: e.message });
+    }
+    return next(e);
+  }
+  await notify(client, { userId: Number(ride.rider_id), role: "user", type: "ride_accepted", params: { ride: num(req.params.id), fare: Number(o.fare) }, rideId: num(req.params.id) });
+  res.json({ ride_id: num(req.params.id), driver_id: o.driver_id, agreed_fare: o.fare, accepted_by: "driver" });
+});
+
 // Driver sends a counter-offer.
 app.post("/api/rides/:id/counter", requireAuth, async (req, res) => {
   const { driver_id, fare } = req.body || {};
@@ -848,19 +1105,35 @@ app.post("/api/rides/:id/counter", requireAuth, async (req, res) => {
   if (!d.rows.length || d.rows[0].status !== "approved") return res.status(403).json({ error: "driver is not approved yet" });
   const f = num(fare, 0);
   if (f <= 0) return res.status(400).json({ error: "fare must be more than 0" });
+  // One timestamp for both columns so expires_at - created_at is exactly TTL.
+  const t0 = now();
   const r = await client.execute({
-    sql: "INSERT INTO offers(ride_id, driver_id, fare, eta_min, created_at) VALUES (?, ?, ?, 5, ?)",
-    args: [num(req.params.id), num(driver_id), f, now()],
+    sql: "INSERT INTO offers(ride_id, driver_id, fare, eta_min, expires_at, created_at) VALUES (?, ?, ?, 5, ?, ?)",
+    args: [num(req.params.id), num(driver_id), f, t0 + OFFER_TTL_MS, t0],
   });
   await notify(client, { userId: Number(ride.rider_id), role: "user", type: "offer_received", params: { ride: num(req.params.id), driver: req.auth.name || "", fare: f }, rideId: num(req.params.id) });
   res.json({ offer_id: Number(r.lastInsertRowid), fare: f });
 });
 
 // Driver declines a request — no penalty, ever.
+// v2.3: declining an already-expired offer is a 400 ("offer has expired");
+// declining while a pending offer exists still declines it (200).
 app.post("/api/rides/:id/decline", requireAuth, async (req, res) => {
   const { driver_id } = req.body || {};
   if (req.auth.ownerType !== "user" || req.auth.ownerId !== num(driver_id)) {
     return res.status(403).json({ error: "Sirf apne naam se decline kar sakte hain" });
+  }
+  await expireStaleOffers(client, num(req.params.id));
+  const pending = await client.execute({
+    sql: "SELECT 1 AS x FROM offers WHERE ride_id = ? AND driver_id = ? AND status = 'pending' LIMIT 1",
+    args: [num(req.params.id), num(driver_id)],
+  });
+  if (!pending.rows.length) {
+    const expired = await client.execute({
+      sql: "SELECT 1 AS x FROM offers WHERE ride_id = ? AND driver_id = ? AND status = 'expired' LIMIT 1",
+      args: [num(req.params.id), num(driver_id)],
+    });
+    if (expired.rows.length) return res.status(400).json({ error: "offer has expired" });
   }
   await client.execute({
     sql: "UPDATE offers SET status='declined' WHERE ride_id = ? AND driver_id = ? AND status='pending'",
@@ -1070,20 +1343,14 @@ app.get("/api/admin/drivers", requireAdmin, async (req, res) => {
   const rows = await client.execute({
     sql: `SELECT d.*, u.name, u.phone, u.rating, u.rating_count, u.demo, u.status AS user_status FROM drivers d JOIN users u ON u.id = d.user_id ORDER BY d.created_at DESC`,
   });
-  // Per-driver document checklist (v2.2): the admin list shows CNIC /
-  // licence / vehicle ✓/✗ without opening each driver's documents.
-  const docs = await client.execute({ sql: "SELECT driver_id, doc_type, status FROM documents" });
-  const byDriver = {};
-  for (const doc of docs.rows) {
-    (byDriver[doc.driver_id] = byDriver[doc.driver_id] || []).push(doc);
+  // Per-driver document checklist (v2.2, expiry-aware since v2.3): the
+  // admin list shows CNIC / licence / vehicle ✓/✗ without opening each
+  // driver's documents. An expired document does NOT count as approved.
+  const drivers = [];
+  for (const x of rows.rows) {
+    const cl = await getDocChecklist(client, x.user_id);
+    drivers.push({ ...x, doc_checklist: { cnic: cl.cnic, licence: cl.licence, vehicle: cl.vehicle, all: cl.all, expired: cl.expired, expires_soon: cl.expires_soon } });
   }
-  const drivers = rows.rows.map((x) => {
-    const approved = new Set((byDriver[x.user_id] || []).filter((d) => d.status === "approved").map((d) => d.doc_type));
-    const cnic = approved.has("cnic") || (approved.has("cnic_front") && approved.has("cnic_back"));
-    const licence = approved.has("licence");
-    const vehicle = approved.has("vehicle");
-    return { ...x, doc_checklist: { cnic, licence, vehicle, all: cnic && licence && vehicle } };
-  });
   res.json({ drivers });
 });
 
@@ -1605,7 +1872,7 @@ app.post("/api/admin/demo/disable", requireAdmin, async (req, res) => {
 
 // Fare + commission settings — take effect immediately for new fare estimates.
 app.post("/api/admin/settings", requireAdmin, async (req, res) => {
-  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup", "min_withdrawal", "pilot_mode", "pilot_max_drivers", "pilot_max_riders", "pilot_chunian_only"];
+  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup", "min_withdrawal", "pilot_mode", "pilot_max_drivers", "pilot_max_riders", "pilot_chunian_only", "owner_name"];
   const before = await getSettings();
   const changed = [];
   for (const key of allowed) {
@@ -1620,6 +1887,12 @@ app.post("/api/admin/settings", requireAdmin, async (req, res) => {
         const n = Math.floor(Number(value));
         if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: "pilot cap must be a number" });
         value = String(n);
+      }
+      // v2.3: owner_name is editable from admin settings now — non-empty,
+      // capped at 100 chars; an empty value is rejected, not stored.
+      if (key === "owner_name") {
+        value = value.trim().slice(0, 100);
+        if (!value) return res.status(400).json({ error: "owner_name must not be empty" });
       }
       await client.execute({
         sql: "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1866,43 +2139,62 @@ app.post("/api/drivers/me/documents", requireAuth, async (req, res) => {
   if (req.auth.ownerType !== "user" || req.auth.role !== "driver") {
     return res.status(403).json({ error: "Sirf driver apni documents upload kar sakta hai" });
   }
-  const { doc_type, mime, data_url } = req.body || {};
+  const { doc_type, mime, data_url, expires_at } = req.body || {};
   if (!DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: "invalid document type" });
   if (!DOC_MIMES.includes(mime)) return res.status(400).json({ error: "only JPG or PNG photos are allowed" });
   const dataUrl = String(data_url || "");
   if (!dataUrl.startsWith("data:image/") || dataUrl.length > DOC_MAX_CHARS) {
     return res.status(400).json({ error: "document is too large — max 1.5 MB" });
   }
+  // v2.3: optional expiry (epoch ms). If given it must be a valid future date.
+  let exp = null;
+  if (expires_at != null && expires_at !== "") {
+    exp = Number(expires_at);
+    if (!Number.isFinite(exp) || exp <= now()) {
+      return res.status(400).json({ error: "expires_at must be a future date" });
+    }
+  }
   const d = await client.execute({ sql: "SELECT * FROM drivers WHERE user_id = ?", args: [req.auth.ownerId] });
   if (!d.rows.length) return res.status(404).json({ error: "driver not found" });
   const out = await withTx(async (tx) => {
     await tx.execute({ sql: "DELETE FROM documents WHERE driver_id = ? AND doc_type = ?", args: [req.auth.ownerId, doc_type] });
     const r = await tx.execute({
-      sql: "INSERT INTO documents(driver_id, doc_type, data_url, mime, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)",
-      args: [req.auth.ownerId, doc_type, dataUrl, mime, now()],
+      sql: "INSERT INTO documents(driver_id, doc_type, data_url, mime, status, expires_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+      args: [req.auth.ownerId, doc_type, dataUrl, mime, exp, now()],
     });
     return { document_id: Number(r.lastInsertRowid) };
   });
-  res.json({ ...out, doc_type, status: "pending", message: "Document upload ho gaya — approval ke liye bhej di." });
+  res.json({ ...out, doc_type, status: "pending", expires_at: exp, message: "Document upload ho gaya — approval ke liye bhej di." });
 });
+
+// Per-document expiry flags (v2.3): expired = expires_at is past;
+// expires_soon = expires within 30 days. Shared by both document lists.
+function withDocExpiryFlags(docs) {
+  const t = now();
+  return docs.map((d) => ({
+    ...d,
+    expired: d.expires_at != null && Number(d.expires_at) <= t,
+    expires_soon: d.expires_at != null && Number(d.expires_at) > t && Number(d.expires_at) <= t + 30 * 86400000,
+  }));
+}
 
 app.get("/api/drivers/me/documents", requireAuth, async (req, res) => {
   if (req.auth.ownerType !== "user" || req.auth.role !== "driver") {
     return res.status(403).json({ error: "Sirf driver apni documents dekh sakta hai" });
   }
   const rows = await client.execute({
-    sql: "SELECT id, doc_type, mime, status, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
+    sql: "SELECT id, doc_type, mime, status, expires_at, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
     args: [req.auth.ownerId],
   });
-  res.json({ documents: rows.rows, doc_checklist: await getDocChecklist(client, req.auth.ownerId) });
+  res.json({ documents: withDocExpiryFlags(rows.rows), doc_checklist: await getDocChecklist(client, req.auth.ownerId) });
 });
 
 app.get("/api/admin/drivers/:id/documents", requireAdmin, async (req, res) => {
   const rows = await client.execute({
-    sql: "SELECT id, doc_type, mime, status, data_url, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
+    sql: "SELECT id, doc_type, mime, status, data_url, expires_at, created_at, reviewed_at FROM documents WHERE driver_id = ? ORDER BY doc_type",
     args: [num(req.params.id)],
   });
-  res.json({ documents: rows.rows, doc_checklist: await getDocChecklist(client, num(req.params.id)) });
+  res.json({ documents: withDocExpiryFlags(rows.rows), doc_checklist: await getDocChecklist(client, num(req.params.id)) });
 });
 
 app.get("/api/admin/documents/:id", requireAdmin, async (req, res) => {
@@ -1915,6 +2207,11 @@ app.post("/api/admin/documents/:id/approve", requireAdmin, async (req, res) => {
   const doc = await client.execute({ sql: "SELECT * FROM documents WHERE id = ?", args: [num(req.params.id)] });
   if (!doc.rows.length) return res.status(404).json({ error: "document not found" });
   const d = doc.rows[0];
+  // v2.3: an already-expired document cannot be approved — the driver
+  // must re-upload a fresh one.
+  if (d.expires_at != null && Number(d.expires_at) <= now()) {
+    return res.status(400).json({ error: "document has expired — ask the driver to re-upload" });
+  }
   await withTx(async (tx) => {
     await tx.execute({ sql: "UPDATE documents SET status='approved', reviewed_at=? WHERE id=?", args: [now(), num(req.params.id)] });
     // Recompute the verification gate (v2.2): documents_status is
@@ -1947,6 +2244,14 @@ app.get("/admin", (req, res) => res.sendFile(path.join(root, "public", "admin.ht
 app.get("/rider", (req, res) => res.sendFile(path.join(root, "public", "rider.html")));
 app.get("/driver", (req, res) => res.sendFile(path.join(root, "public", "driver.html")));
 
+// ---- Scheduled-ride reminders (v2.3) ----
+// Sweep every 5 minutes (guarded — a failed sweep never crashes the
+// server). The same sweep also runs lazily on ride-detail reads so a due
+// reminder is not stuck waiting for the next tick.
+setInterval(() => {
+  runScheduledReminders().catch((e) => console.warn("[chunian-ride] scheduled-reminder sweep failed:", e.message));
+}, 5 * 60 * 1000);
+
 // JSON error handler — never leak a stack trace or an HTML error page to the app.
 app.use((err, req, res, next) => {
   console.error("[chunian-ride] error:", err && err.message ? err.message : err);
@@ -1955,6 +2260,7 @@ app.use((err, req, res, next) => {
 });
 
 initDb()
+  .then(() => ensureVapidKeys())
   .then(() => ensureSetupToken())
   .then(() => {
     app.listen(PORT, () => {

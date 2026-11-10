@@ -8,7 +8,9 @@
 <meta name="description" content="Chunian Ride driver app — go online, take ride requests, earn. Cash payment, prepaid wallet top-up.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="/style.css?v=8">
+<link rel="stylesheet" href="/rider-driver-v23.css?v=1">
 <link rel="icon" type="image/png" href="/favicon.png?v=2">
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -69,6 +71,8 @@
         <h2 data-i18n="status_card">Your status</h2>
         <div id="driver-info"></div>
         <p class="muted" id="loc-status"></p>
+        <div id="gps-banner"></div>
+        <p class="muted" id="gps-detail"></p>
         <button id="online-btn" class="primary" data-i18n="go_online">Go Online</button>
       </div>
 
@@ -88,11 +92,29 @@
         <button id="btn-driver-rides" data-i18n="btn_history">Show history</button>
         <div id="driver-chat-card" class="hidden">
           <h3 data-i18n="chat_title_driver">Chat with rider</h3>
+          <span id="driver-chat-unread" class="v23-unread-badge" style="display:none"></span>
           <p class="muted" id="driver-chat-who"></p>
           <div id="driver-chat-list" class="chat-list"></div>
           <div class="chat-input-row">
             <input id="driver-chat-input" data-i18n-ph="chat_ph" placeholder="Write a message…" maxlength="500">
             <button id="btn-driver-chat-send" data-i18n="btn_send">Send</button>
+          </div>
+          <div id="driver-call-box" class="v23-call hidden">
+            <p id="driver-call-status"></p>
+            <div class="row">
+              <button id="btn-driver-call" data-i18n="call_btn">📞 Call</button>
+              <button id="btn-driver-call-accept" class="hidden primary" data-i18n="call_accept">Accept call</button>
+              <button id="btn-driver-call-reject" class="hidden" data-i18n="call_reject">Reject</button>
+              <button id="btn-driver-call-mute" class="hidden" data-i18n="call_mute">Mute</button>
+              <button id="btn-driver-call-end" class="hidden danger" data-i18n="call_end">End call</button>
+            </div>
+            <p class="muted" data-i18n="chat_note">Only for this ride — phone numbers are not shared.</p>
+          </div>
+          <div class="v23-complaint">
+            <h4 data-i18n="complaint_title">Report a problem with this ride</h4>
+            <textarea id="driver-complaint-text" maxlength="500" data-i18n-ph="complaint_ph" placeholder="Describe the problem…"></textarea>
+            <button id="btn-driver-complaint" data-i18n="complaint_btn">Send complaint</button>
+            <p class="muted" id="driver-complaint-out"></p>
           </div>
         </div>
         <div id="driver-rides"></div>
@@ -106,6 +128,9 @@
       <p class="eyebrow">Driver</p>
       <h2 data-i18n="requests_title">Ride requests</h2>
       <button id="btn-requests" data-i18n="requests_title">Ride requests</button>
+      <div id="driver-map" class="v23-map"></div>
+      <p class="muted" id="driver-route-info"></p>
+      <p class="v23-nav-links" id="driver-nav-links"></p>
       <div id="requests-list"></div>
     </div>
   </section>
@@ -120,6 +145,7 @@
     <div class="card">
       <p class="eyebrow">Driver</p>
       <h2 data-i18n="topup_title">Top-up — prepaid wallet</h2>
+      <div id="topup-method-box"></div>
       <input id="topup-amount" type="number" min="500" data-i18n-ph="topup_amount_ph" placeholder="Top-up amount (Rs) — minimum Rs 500">
       <input id="topup-tid" data-i18n-ph="topup_tid_ph" placeholder="JazzCash TID (transaction ID)">
       <p class="form-err" id="topup-err" role="alert"></p>
@@ -158,6 +184,12 @@
       <div class="row" style="margin-top:12px">
         <button id="btn-logout" data-i18n="btn_logout">Logout</button>
       </div>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow" data-i18n="support">Support</p>
+      <div id="driver-support-info"></div>
+      <div id="driver-push-toggle-box"></div>
     </div>
 
     <div class="card">
@@ -205,8 +237,9 @@
   <button class="nav-btn" data-screen="profile">👤<span data-i18n="nav_profile">Profile</span></button>
 </nav>
 
-<script src="/shared.js?v=8"></script>
-<script src="/driver.js?v=8"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/shared.js?v=9"></script>
+<script src="/driver.js?v=9"></script>
 <script>
   $("btn-driver-login").addEventListener("click", (e) => driverLogin(e.currentTarget));
   $("online-btn").addEventListener("click", (e) => toggleOnline(e.currentTarget));
@@ -215,6 +248,12 @@
   $("btn-driver-rides").addEventListener("click", loadDriverRides);
   $("btn-requests").addEventListener("click", loadRequests);
   $("btn-driver-chat-send").addEventListener("click", (e) => sendDriverChat(e.currentTarget));
+  $("btn-driver-complaint").addEventListener("click", (e) => sendDriverComplaint(e.currentTarget));
+  $("btn-driver-call").addEventListener("click", () => { if (callCtl) callCtl.startCall(); });
+  $("btn-driver-call-accept").addEventListener("click", () => { if (callCtl) callCtl.acceptIncoming(); });
+  $("btn-driver-call-reject").addEventListener("click", () => { if (callCtl) callCtl.rejectIncoming(); });
+  $("btn-driver-call-mute").addEventListener("click", () => { if (callCtl) { callCtl.toggleMute(); updateCallUI(callCtl.getState()); } });
+  $("btn-driver-call-end").addEventListener("click", () => { if (callCtl) callCtl.endCall(); });
   $("btn-topup").addEventListener("click", (e) => topup(e.currentTarget));
   $("btn-withdraw").addEventListener("click", (e) => withdraw(e.currentTarget));
   $("btn-change-pw").addEventListener("click", (e) => changePassword($("pw-current"), $("pw-new"), $("pw-err"), e.currentTarget));
