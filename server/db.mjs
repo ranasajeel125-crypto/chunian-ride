@@ -72,6 +72,14 @@ export const DEFAULT_SETTINGS = {
   pilot_max_drivers: "10",
   pilot_max_riders: "20",
   pilot_chunian_only: "1",
+  // Auto-approve (v2.6, inDrive-like login — owner order 2026-11-10).
+  // "1" (default) = no owner bottleneck: riders join instantly (pilot
+  // whitelist + caps bypassed) and drivers are approved automatically
+  // once CNIC + licence + vehicle documents are all uploaded. "0" =
+  // manual approval exactly as before (whitelist gate + owner approval).
+  // The owner can flip it back any time from Admin → Pilot settings;
+  // flipping OFF→ON sweeps pending drivers with complete documents.
+  auto_approve: "1",
 };
 
 const STATEMENTS = [

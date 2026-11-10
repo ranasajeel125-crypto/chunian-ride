@@ -248,6 +248,14 @@ main.landing-main { padding-top: 0; }
 }
 .card-sub { color: var(--muted); font-size: 13.5px; margin: 0 0 8px; line-height: 1.5; }
 
+/* ---------- Login / Signup split (v2.6) ---------- */
+/* The two paths are visually separate blocks so a first-time user can tell
+   at a glance which one is theirs: Login (phone + password) vs Sign up /
+   Register (new account). The Google button sits below both, unchanged. */
+.auth-block { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px; margin: 12px 0; background: var(--bg); }
+.auth-block h3 { margin: 0 0 6px; font-size: 16px; font-weight: 800; }
+.or-divider { text-align: center; color: var(--muted); font-size: 13px; font-weight: 700; margin: 4px 0; }
+
 /* ---------- Forms ---------- */
 label { display: block; font-size: 13px; font-weight: 700; margin: 12px 0 5px; color: var(--navy-2); }
 input, select {

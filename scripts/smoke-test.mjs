@@ -51,7 +51,7 @@ function extractSetupToken(out) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Cookie jar: login responses set cr_session; call() sends it back.
-const jar = { rider: "", riderB: "", driver: "", admin: "" };
+const jar = { rider: "", riderB: "", driver: "", admin: "", autoRider: "", autoDriver: "" };
 async function call(p, opts = {}) {
   const headers = { "Content-Type": "application/json" };
   const who = opts.session;
@@ -110,7 +110,53 @@ async function main() {
   await expectFail("pilot lock: fare Chunian->Pattoki -> 400 while pilot ON", () => call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Pattoki", vehicle: "car" }) }), 400);
   const bikeFarePilot = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Chunian City", vehicle: "bike", distance_km: 3 }) });
   check("pilot lock: Chunian->Chunian bike 3 km = Rs 50 minimum", bikeFarePilot.suggested_fare === 50, `got Rs ${bikeFarePilot.suggested_fare}`);
-  await expectFail("pilot lock: non-whitelisted signup -> 403 while pilot ON", () => call("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "No Invite", phone: "0309-5555555", password: "noinvite", role: "rider" }) }), 403);
+
+  // ---- Auto-approve (v2.6, inDrive-like login) — defaults ON ----
+  // With auto_approve ON the pilot whitelist gate is bypassed entirely:
+  // a brand-new rider joins instantly, and a driver is approved
+  // automatically once CNIC + licence + vehicle are all uploaded.
+  // (The pilot AREA lock above is untouched — rides stay Chunian-only.)
+  check("auto_approve defaults to ON (1) on a fresh DB", String(pilotSettings.settings.auto_approve) === "1", `auto_approve=${pilotSettings.settings.auto_approve}`);
+  await expectFail("google login unconfigured on the main server -> 503", () => call("/api/auth/google?role=rider"), 503);
+
+  // (a) Rider signup auto-approved with NO whitelist entry.
+  const autoRiderRes = await callRaw("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "Auto Rider", phone: "0309-5550001", password: "autoriderpass", role: "rider" }) });
+  check("rider signup with NO whitelist entry -> 200 (auto-approve ON)", autoRiderRes.status === 200 && !!autoRiderRes.data.user.id, `id=${autoRiderRes.data.user && autoRiderRes.data.user.id}`);
+  saveCookie("autoRider", autoRiderRes.setCookie);
+  const autoRider = autoRiderRes.data.user;
+  const autoMe = await call("/api/auth/me", { session: "autoRider" });
+  check("auto rider session persists via /api/auth/me (cookie cr_session)", autoMe.user && autoMe.user.id === autoRider.id, `id=${autoMe.user && autoMe.user.id}`);
+  const autoFare = await call("/api/fare", { method: "POST", body: JSON.stringify({ pickup: "Chunian City", destination: "Chunian City", vehicle: "bike", distance_km: 3 }), session: "autoRider" });
+  check("auto rider can reach booking (fare Chunian->Chunian bike 3 km = Rs 50)", autoFare.suggested_fare === 50, `got Rs ${autoFare.suggested_fare}`);
+
+  // (b) Driver: register -> login -> upload 3 docs -> auto-approved -> online.
+  const autoDriverRes = await callRaw("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "Auto Driver", phone: "0309-5550002", password: "autodriverpass", role: "driver" }) });
+  check("driver signup with NO whitelist entry -> 200 (auto-approve ON)", autoDriverRes.status === 200 && !!autoDriverRes.data.user.id, `id=${autoDriverRes.data.user && autoDriverRes.data.user.id}`);
+  saveCookie("autoDriver", autoDriverRes.setCookie);
+  const autoDriver = autoDriverRes.data.user;
+  const autoDriverLogin = await callRaw("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0309-5550002", password: "autodriverpass" }) });
+  check("auto driver login works instantly (no owner wait)", autoDriverLogin.status === 200);
+  saveCookie("autoDriver", autoDriverLogin.setCookie);
+  const autoReg = await call("/api/drivers/register", { method: "POST", body: JSON.stringify({ user_id: autoDriver.id, vehicle_type: "bike", vehicle_model: "Honda CD 70", plate: "AUTO-1", cnic: "35202-5550002-1", licence: "LIC-AUTO", vehicle_reg: "REG-AUTO" }), session: "autoDriver" });
+  check("auto driver registration submitted (pending)", autoReg.status === "pending", JSON.stringify(autoReg));
+  const autoOnlineEarly = await callRaw(`/api/drivers/${autoDriver.id}/online`, { method: "POST", body: JSON.stringify({ online: true }), session: "autoDriver" });
+  check("driver with no documents cannot go online yet -> 403", autoOnlineEarly.status === 403, `got ${autoOnlineEarly.status}`);
+  // Short placeholder image: the server only checks the data:image/ prefix,
+  // the JPG/PNG mime and the ~1.5 MB cap — it never decodes the pixels.
+  const tinyJpeg26 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//Z";
+  for (const dt of ["cnic_front", "cnic_back", "licence"]) {
+    const up = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: dt, mime: "image/jpeg", data_url: tinyJpeg26 }), session: "autoDriver" });
+    check(`auto driver uploads ${dt} (still pending — set incomplete)`, up.status === "pending" && !!up.document_id, JSON.stringify(up));
+  }
+  const autoLast = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "vehicle", mime: "image/jpeg", data_url: tinyJpeg26 }), session: "autoDriver" });
+  check("last document (vehicle) completes the set -> auto-approved", autoLast.status === "approved" && autoLast.auto_approved === true, JSON.stringify(autoLast));
+  const autoDocs = await call("/api/drivers/me/documents", { session: "autoDriver" });
+  check("auto driver sees all documents approved + checklist all true", autoDocs.documents.every((d) => d.status === "approved") && autoDocs.doc_checklist.all === true, JSON.stringify(autoDocs.doc_checklist));
+  const autoOnline = await callRaw(`/api/drivers/${autoDriver.id}/online`, { method: "POST", body: JSON.stringify({ online: true, lat: 30.9667, lng: 74.0333 }), session: "autoDriver" });
+  check("auto-approved driver goes online -> 200 (no owner wait)", autoOnline.status === 200, `got ${autoOnline.status}`);
+  // Take him offline again so the later admin-overview online count (5
+  // seeded demo drivers) is unaffected by this smoke driver.
+  await call(`/api/drivers/${autoDriver.id}/online`, { method: "POST", body: JSON.stringify({ online: false }), session: "autoDriver" });
 
   // ---- Auth guards: nothing works without a session ----
   await expectFail("unauthenticated ride booking -> 401", () => call("/api/rides", { method: "POST", body: JSON.stringify({ rider_id: 1, pickup: "Chunian City", destination: "Pattoki", vehicle: "car" }) }), 401);
@@ -147,6 +193,15 @@ async function main() {
   for (let i = 0; i < 5; i++) await callRaw("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0300-0000001", password: "wrong" }) });
   const locked = await callRaw("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0300-0000001", password: "wrong" }) });
   check("6th failed login in 15 min -> 429 rate limit", locked.status === 429, `got ${locked.status}`);
+
+  // ---- Auto-approve OFF (v2.6) — the old manual behaviour returns ----
+  // The owner can flip auto-approve off any time from Admin → Pilot
+  // settings; with it OFF the pilot whitelist gate is back in force.
+  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ auto_approve: "0" }), session: "admin" });
+  const autoOff = await call("/api/settings");
+  check("auto_approve toggled OFF via admin settings", String(autoOff.settings.auto_approve) === "0", `auto_approve=${autoOff.settings.auto_approve}`);
+  await expectFail("auto-approve OFF: non-whitelisted signup -> 403 (old behaviour)", () => call("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: "No Invite", phone: "0309-5555555", password: "noinvite", role: "rider" }) }), 403);
+  await expectFail("auto-approve OFF: bad value rejected -> 400", () => call("/api/admin/settings", { method: "POST", body: JSON.stringify({ auto_approve: "2" }), session: "admin" }), 400);
 
   // ---- Pilot OFF toggle (v2.2) — the rest of the legacy flow needs
   // intercity fares, so the owner-equivalent toggle runs here first.
@@ -353,14 +408,15 @@ async function main() {
   check("promo code listed", promos.promo_codes.some((p) => p.code === "SMOKE10"));
 
   // ---- Admin overview (dashboard) ----
-  // At this point: 8 users (6 demo + 2 riders), 3 riders, 5 drivers (all
-  // online), 3 rides total (2 seeded + smoke), 3 completed (fees 138+26+134
-  // = Rs 298 in the last 7 days), 1 open SOS complaint, 0 pending top-ups
-  // (both reviewed), 0 pending drivers.
+  // At this point: 10 users (6 demo + 2 riders + auto rider + auto driver),
+  // 4 riders, 6 drivers (5 seeded online + auto driver offline), 3 rides
+  // total (2 seeded + smoke), 3 completed (fees 138+26+134 = Rs 298 in
+  // the last 7 days), 1 open SOS complaint, 0 pending top-ups, 0 pending
+  // drivers.
   const ov = await call("/api/admin/overview", { session: "admin" });
   const ovNums = [ov.totals.users, ov.totals.riders, ov.totals.drivers, ov.totals.drivers_online, ov.totals.rides_today, ov.totals.rides_total, ov.totals.completed_today, ov.pending_topups, ov.open_complaints, ov.pending_drivers, ov.platform_revenue_7d, ov.platform_revenue_today];
   check("admin overview returns all fields as numbers", ovNums.every((n) => typeof n === "number"), JSON.stringify(ov));
-  check("overview totals: 8 users / 3 riders / 5 drivers / 5 online", ov.totals.users === 8 && ov.totals.riders === 3 && ov.totals.drivers === 5 && ov.totals.drivers_online === 5, JSON.stringify(ov.totals));
+  check("overview totals: 10 users / 4 riders / 6 drivers / 5 online", ov.totals.users === 10 && ov.totals.riders === 4 && ov.totals.drivers === 6 && ov.totals.drivers_online === 5, JSON.stringify(ov.totals));
   check("overview rides: 3 total, >= 2 today/completed", ov.totals.rides_total === 3 && ov.totals.rides_today >= 2 && ov.totals.completed_today >= 2, JSON.stringify(ov.totals));
   check("overview revenue 7d = Rs 298 (138 + 26 + 134)", ov.platform_revenue_7d === 298, `got Rs ${ov.platform_revenue_7d}`);
   check("overview: 1 open complaint, 0 pending top-ups/drivers", ov.open_complaints === 1 && ov.pending_topups === 0 && ov.pending_drivers === 0, `complaints=${ov.open_complaints}, topups=${ov.pending_topups}, drivers=${ov.pending_drivers}`);
@@ -387,7 +443,9 @@ async function main() {
 
   // Seed data present.
   const drivers = await call("/api/admin/drivers", { session: "admin" });
-  check("5 seeded demo drivers (incl. AC Car)", drivers.drivers.length === 5, drivers.drivers.map((d) => d.name).join(", "));
+  check("5 seeded demo drivers + auto-approved smoke driver = 6", drivers.drivers.length === 6, drivers.drivers.map((d) => d.name).join(", "));
+  const autoRow = drivers.drivers.find((x) => x.name === "Auto Driver");
+  check("auto-approved smoke driver shows approved in the admin drivers list", !!autoRow && autoRow.status === "approved" && autoRow.doc_checklist && autoRow.doc_checklist.all === true, JSON.stringify(autoRow && { status: autoRow.status, doc_checklist: autoRow.doc_checklist }));
   const aliRaza = drivers.drivers.find((x) => x.name === "Ali Raza");
   check("AC Car demo driver seeded (Ali Raza, Toyota Corolla GLi, online)", !!aliRaza && aliRaza.vehicle_type === "ac_car" && aliRaza.plate === "DEMO-ACC-01" && aliRaza.online === 1, JSON.stringify(aliRaza && { vehicle_type: aliRaza.vehicle_type, plate: aliRaza.plate, online: aliRaza.online }));
   const allRides = await call("/api/admin/rides", { session: "admin" });
@@ -493,6 +551,9 @@ async function main() {
   if (fs.existsSync(path.join(root, "public", "rider.html"))) {
     const riderPage = await (await fetch(BASE + "/rider")).text();
     check("rider page has scheduled-ride inputs + tip box + password field", riderPage.includes("sched-date") && riderPage.includes("sched-time") && riderPage.includes("tip-box") && riderPage.includes("rider-password"));
+    check("rider page splits Login vs Sign up with plain-word explainers", riderPage.includes("rider_signup_title") && riderPage.includes("rider_signup_sub") && riderPage.includes("rider_login_sub"));
+    const sharedJs26 = await (await fetch(BASE + "/shared.js")).text();
+    check("shared.js carries the plain-word signup explainers (book right away / checked automatically)", sharedJs26.includes("book right away") && sharedJs26.includes("checked automatically"));
   } else {
     console.log("SKIP  rider-page feature markers — public/rider.html not present yet");
   }
@@ -531,7 +592,7 @@ async function main() {
 
   // ================= v2.2 =================
   const health21 = await call("/api/health");
-  check("version is 2.5.0", health21.version === "2.5.0", `got ${health21.version}`);
+  check("version is 2.6.0", health21.version === "2.6.0", `got ${health21.version}`);
 
   // ---- PWA ----
   const manifestRes = await fetch(BASE + "/manifest.json");
@@ -543,9 +604,9 @@ async function main() {
   check("icon 512 serves 200", (await fetch(BASE + "/icons/icon-512.png")).status === 200);
   const swRes = await fetch(BASE + "/sw.js");
   const swText = await swRes.text();
-  check("sw.js serves 200 with versioned cache chunian-ride-v2.5.0", swRes.status === 200 && swText.includes("chunian-ride-v2.5.0"));
+  check("sw.js serves 200 with versioned cache chunian-ride-v2.6.0", swRes.status === 200 && swText.includes("chunian-ride-v2.6.0"));
   const landing21 = await (await fetch(BASE + "/")).text();
-  check("landing footer says v2.5 + links manifest", landing21.includes("Chunian Ride v2.5") && landing21.includes("/manifest.json"));
+  check("landing footer says v2.6 + links manifest", landing21.includes("Chunian Ride v2.6") && landing21.includes("/manifest.json"));
 
   const riderPage21 = await (await fetch(BASE + "/rider")).text();
   check("rider page has promo input + notification bell + rider top-up card", riderPage21.includes("promo-code") && riderPage21.includes("notif-bell") && riderPage21.includes("rider-topup-amount"));
@@ -561,6 +622,7 @@ async function main() {
   check("rider.js GPS denial shows inline hint only, no error toast", !riderJs24.includes('toast(t("gps_denied")'));
   const driverPage21 = await (await fetch(BASE + "/driver")).text();
   check("driver page has withdrawal form + documents card + bell", driverPage21.includes("withdraw-amount") && driverPage21.includes("docs-list") && driverPage21.includes("notif-bell"));
+  check("driver page splits Login vs Register with plain-word explainers", driverPage21.includes("driver_signup_title") && driverPage21.includes("driver_signup_sub") && driverPage21.includes("driver_login_sub") && driverPage21.includes("btn-goto-register"));
   const adminPage21 = await (await fetch(BASE + "/admin")).text();
   check("admin page has withdrawals section + refund form + bell", adminPage21.includes("sec-withdrawals") && adminPage21.includes("refund-user") && adminPage21.includes("notif-bell"));
   const sharedJs21 = await (await fetch(BASE + "/shared.js")).text();
@@ -746,9 +808,19 @@ async function main() {
   const adminDrivers2 = await call("/api/admin/drivers", { session: "admin" });
   const d2row = adminDrivers2.drivers.find((x) => x.user_id === newDriver.id);
   check("admin drivers list shows the doc checklist (all true)", !!d2row && d2row.doc_checklist && d2row.doc_checklist.all === true, JSON.stringify(d2row && d2row.doc_checklist));
-  await call(`/api/admin/drivers/${newDriver.id}/approve`, { method: "POST", body: "{}", session: "admin" });
+  // v2.6 OFF→ON sweep: flipping auto-approve back ON auto-approves this
+  // pending driver (documents already complete) — no manual /approve call.
+  const sweep = await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ auto_approve: "1" }), session: "admin" });
+  check("OFF→ON sweep auto-approved 1 pending driver", sweep.auto_approved === 1, JSON.stringify(sweep));
+  const d2rowAfterSweep = (await call("/api/admin/drivers", { session: "admin" })).drivers.find((x) => x.user_id === newDriver.id);
+  check("swept driver shows approved in the admin drivers list", !!d2rowAfterSweep && d2rowAfterSweep.status === "approved", JSON.stringify(d2rowAfterSweep && d2rowAfterSweep.status));
+  const auditSweep = await call("/api/admin/audit-log?action=auto_approve", { session: "admin" });
+  check("sweep writes an auto_approve audit entry for the driver", auditSweep.audit_log.some((a) => a.action === "auto_approve" && Number(a.target_id) === newDriver.id), JSON.stringify(auditSweep.audit_log.map((a) => a.action)));
   const d2Notifs = await call("/api/notifications", { session: "driver2" });
   check("new driver gets driver_approved notification", d2Notifs.notifications.some((n) => n.type === "driver_approved"), d2Notifs.notifications.map((n) => n.type).join(","));
+  // Back to manual mode for the rest of the suite (the pilot cap tests
+  // below need the whitelist gate in force).
+  await call("/api/admin/settings", { method: "POST", body: JSON.stringify({ auto_approve: "0" }), session: "admin" });
   // Re-upload licence (replaces the approved row with a pending one), then reject it.
   const doc2 = await call("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: "licence", mime: "image/jpeg", data_url: tinyJpeg }), session: "driver2" });
   const docReject = await call(`/api/admin/documents/${doc2.document_id}/reject`, { method: "POST", body: "{}", session: "admin" });
@@ -899,6 +971,7 @@ async function main() {
   // ---- Pilot live board ----
   const pStatus = await call("/api/admin/pilot-status", { session: "admin" });
   check("pilot-status: mode ON, caps 10/20", pStatus.pilot_mode === true && pStatus.caps.drivers === 10 && pStatus.caps.riders === 20, JSON.stringify(pStatus.caps));
+  check("pilot-status: auto_approve OFF here (manual mode for the cap tests), auto-approved drivers >= 2", pStatus.auto_approve === false && pStatus.drivers.auto_approved >= 2, JSON.stringify({ auto_approve: pStatus.auto_approve, auto_approved: pStatus.drivers.auto_approved }));
   check("pilot-status: drivers whitelisted >= 2, signed up >= 1, verified >= 1, online >= 1", pStatus.drivers.whitelisted >= 2 && pStatus.drivers.signed_up >= 1 && pStatus.drivers.verified >= 1 && pStatus.drivers.online >= 1, JSON.stringify(pStatus.drivers));
   check("pilot-status: riders whitelisted >= 2, signed up >= 1", pStatus.riders.whitelisted >= 2 && pStatus.riders.signed_up >= 1, JSON.stringify(pStatus.riders));
   check("pilot-status: rides today completed >= 1, open SOS >= 1", pStatus.rides_today.completed >= 1 && pStatus.open_sos.length >= 1, JSON.stringify({ rides_today: pStatus.rides_today, open_sos: pStatus.open_sos.length }));
@@ -934,7 +1007,7 @@ async function main() {
   // All v2.3 tests run on the pilot accounts (pilot mode is ON, bike,
   // Chunian City -> Chunian City) so nothing after them depends on state.
   const health23 = await call("/api/health");
-  check("v2.5.0 health version is 2.5.0", health23.version === "2.5.0", `got ${health23.version}`);
+  check("v2.6.0 health version is 2.6.0", health23.version === "2.6.0", `got ${health23.version}`);
   // Valid Web Push subscription keys for the subscribe tests: web-push
   // rejects anything else at send time (p256dh must be a 65-byte P-256
   // point, auth 16 bytes) — a made-up key string never reaches the wire.
@@ -1351,13 +1424,17 @@ async function main() {
       check("pending lookup with bad token -> 404", pendBad.status === 404, `got ${pendBad.status}`);
       const pend = await gCall(`/api/auth/google/pending?token=${pendToken}`);
       check("pending lookup returns Google name/email/role", pend.status === 200 && pend.data.name === "Google Rider" && pend.data.email === "googlerider@example.com" && pend.data.role === "rider", JSON.stringify(pend.data));
+      // v2.6: the pilot gate follows auto_approve here too. OFF = the old
+      // 403 for a non-whitelisted phone; ON = the gate is bypassed.
+      await gCall("/api/admin/settings", { method: "POST", body: JSON.stringify({ auto_approve: "0" }), cookie: gAdminCookie });
       const phoneNoWl = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: pendToken, phone: "0309-7777778" }) });
-      check("google phone step with non-whitelisted phone -> 403 pilot message", phoneNoWl.status === 403 && (phoneNoWl.data.error || "").includes("whitelist"), `got ${phoneNoWl.status} ${JSON.stringify(phoneNoWl.data)}`);
-      const phoneOk = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: pendToken, phone: "0309-7777777" }) });
-      check("google phone step with whitelisted phone -> 200 + redirect /rider + session", phoneOk.status === 200 && phoneOk.data.redirect === "/rider" && !!gCookie(phoneOk), JSON.stringify(phoneOk.data));
+      check("google phone step, auto-approve OFF, non-whitelisted phone -> 403 pilot message", phoneNoWl.status === 403 && (phoneNoWl.data.error || "").includes("whitelist"), `got ${phoneNoWl.status} ${JSON.stringify(phoneNoWl.data)}`);
+      await gCall("/api/admin/settings", { method: "POST", body: JSON.stringify({ auto_approve: "1" }), cookie: gAdminCookie });
+      const phoneOk = await gCall("/api/auth/google/phone", { method: "POST", body: JSON.stringify({ token: pendToken, phone: "0309-7777778" }) });
+      check("google phone step, auto-approve ON, same non-whitelisted phone -> 200 + redirect /rider + session", phoneOk.status === 200 && phoneOk.data.redirect === "/rider" && !!gCookie(phoneOk), JSON.stringify(phoneOk.data));
       const gRiderCookie = gCookie(phoneOk);
       const meG = await gCall("/api/auth/me", { cookie: gRiderCookie });
-      check("google-created rider session restores (phone + name from Google)", meG.status === 200 && meG.data.user && meG.data.user.phone === "03097777777" && meG.data.user.name === "Google Rider" && meG.data.user.role === "rider", JSON.stringify(meG.data.user));
+      check("google-created rider session restores (phone + name from Google)", meG.status === 200 && meG.data.user && meG.data.user.phone === "03097777778" && meG.data.user.name === "Google Rider" && meG.data.user.role === "rider", JSON.stringify(meG.data.user));
       const pendGone = await gCall(`/api/auth/google/pending?token=${pendToken}`);
       check("pending token is single-use (gone after phone step)", pendGone.status === 404, `got ${pendGone.status}`);
 
@@ -1368,7 +1445,7 @@ async function main() {
       // Google-only account can add a phone password, then log in with it.
       const pwSet = await gCall("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current: "", next: "googlepass123" }), cookie: gRiderCookie });
       check("google rider sets a password via change-password", pwSet.status === 200, `got ${pwSet.status} ${JSON.stringify(pwSet.data)}`);
-      const pwLogin = await gCall("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0309-7777777", password: "googlepass123" }) });
+      const pwLogin = await gCall("/api/auth/login", { method: "POST", body: JSON.stringify({ phone: "0309-7777778", password: "googlepass123" }) });
       check("phone+password login still works for the google-created rider", pwLogin.status === 200 && !!gCookie(pwLogin), `got ${pwLogin.status}`);
 
       // Driver: link an existing driver account with its phone password.

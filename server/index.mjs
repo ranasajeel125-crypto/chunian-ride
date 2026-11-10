@@ -152,7 +152,7 @@ function canViewRide(ride, auth) {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, app: "chunian-ride", version: "2.5.0", db: usingTurso ? "turso" : "local-sqlite" });
+  res.json({ ok: true, app: "chunian-ride", version: "2.6.0", db: usingTurso ? "turso" : "local-sqlite" });
 });
 
 // App update check (v2.1): single source of truth for the latest APK.
@@ -209,6 +209,65 @@ app.post("/api/fare", async (req, res) => {
   res.json({ pickup, destination, vehicle, distance_km: km, distance_estimated: estimated, suggested_fare: suggested, base_fare: base, discount_amount: discount, promo_code: promo ? promo.code : null, per_km: Number(s[`rate_${vehicle}_per_km`]), min_fare: Number(s[`min_${vehicle}`]) });
 });
 
+// ---- Auto-approve (v2.6, inDrive-like login — owner order 2026-11-10) ----
+// When settings auto_approve is "1" (the default) there is no owner
+// bottleneck: riders join instantly and drivers are approved automatically
+// once CNIC + licence + vehicle documents are all present. When "0", the
+// old manual behaviour returns exactly (pilot whitelist gate + owner
+// approval). The owner can still block/reject any driver or document from
+// admin at any time — auto-approval never removes that power.
+const autoApproveOn = (settings) => String(settings.auto_approve) === "1";
+// Presence check (upload path): are CNIC + licence + vehicle all UPLOADED
+// (any status — upload validation already enforces JPG/PNG + size) and
+// unexpired? Unlike getDocChecklist (approved-only), a freshly uploaded
+// document counts here, so the last upload can complete the set.
+async function gateDocsPresent(txOrClient, driverUserId) {
+  const rows = await txOrClient.execute({
+    sql: "SELECT doc_type, status, expires_at FROM documents WHERE driver_id = ?",
+    args: [Number(driverUserId)],
+  });
+  const live = new Set(
+    rows.rows.filter((r) => r.expires_at == null || Number(r.expires_at) > now()).map((r) => r.doc_type)
+  );
+  const cnic = live.has("cnic") || (live.has("cnic_front") && live.has("cnic_back"));
+  const licence = live.has("licence");
+  const vehicle = live.has("vehicle");
+  return { cnic, licence, vehicle, all: cnic && licence && vehicle };
+}
+// Applies the automatic approval inside the caller's transaction: any
+// still-pending gate documents become approved, the driver becomes
+// approved, and every step is written to the audit log (actor "system")
+// so the owner can see exactly what the system approved on its own.
+// Caller must already have verified completeness (presence or approval).
+async function applyAutoApproval(tx, driverUserId) {
+  const pending = await tx.execute({
+    sql: "SELECT id, doc_type FROM documents WHERE driver_id = ? AND doc_type IN ('cnic','cnic_front','cnic_back','licence','vehicle') AND status = 'pending'",
+    args: [Number(driverUserId)],
+  });
+  for (const d of pending.rows) {
+    await tx.execute({ sql: "UPDATE documents SET status='approved', reviewed_at=? WHERE id=?", args: [now(), d.id] });
+    await writeAudit(tx, {
+      actorId: null, actorRole: "system", action: "doc_auto_approve",
+      targetType: "document", targetId: Number(d.id),
+      detail: `Document ${d.doc_type} auto-approved for driver user #${driverUserId} (auto-approve ON, all 3 documents present)`,
+    });
+  }
+  await tx.execute({ sql: "UPDATE drivers SET status='approved', documents_status='approved' WHERE user_id = ?", args: [Number(driverUserId)] });
+  await writeAudit(tx, {
+    actorId: null, actorRole: "system", action: "auto_approve",
+    targetType: "driver", targetId: Number(driverUserId),
+    detail: `Driver auto-approved (auto-approve ON, CNIC + licence + vehicle complete)`,
+  });
+  return { approvedDocs: pending.rows.map((d) => ({ id: Number(d.id), doc_type: d.doc_type })) };
+}
+// Notify the driver about an automatic approval (after the tx commits).
+async function notifyAutoApproved(driverUserId, approvedDocs) {
+  for (const d of approvedDocs) {
+    await notify(client, { userId: Number(driverUserId), role: "user", type: "doc_approved", params: { doc: d.doc_type } });
+  }
+  await notify(client, { userId: Number(driverUserId), role: "user", type: "driver_approved", params: {} });
+}
+
 // ---- Auth: phone + password (free — no SMS OTP) ----
 app.post("/api/auth/signup", async (req, res) => {
   const { name, phone, password, role } = req.body || {};
@@ -220,27 +279,35 @@ app.post("/api/auth/signup", async (req, res) => {
   // Pilot mode (v2.2): public signup is CLOSED — only whitelisted phones
   // may register, and only up to the pilot caps. Login of existing
   // accounts is unaffected (see /api/auth/login).
+  // v2.6 auto-approve: when auto_approve is ON the whole pilot gate is
+  // SKIPPED (no whitelist requirement, no cap check) so a new rider or
+  // driver joins instantly, like inDrive. A whitelisted number is still
+  // flipped pending→approved below. When OFF, the old behaviour returns
+  // exactly.
+  const settings = await getSettings();
+  const autoApprove = autoApproveOn(settings);
   let whitelistEntry = null;
-  if (String((await getSettings()).pilot_mode) === "1") {
+  if (String(settings.pilot_mode) === "1") {
     const wl = await client.execute({
       sql: "SELECT * FROM pilot_whitelist WHERE phone = ? AND role = ?",
       args: [cleanPhone, wantRole],
     });
     whitelistEntry = wl.rows.find((r) => r.status === "pending" || r.status === "approved") || null;
-    if (!whitelistEntry) {
-      return res.status(403).json({ error: "Pilot registration sirf whitelist par hai — owner se rabta karein" });
-    }
-    // Live cap re-check at signup time (the whitelist-add check is the
-    // first layer; this one guards the actual account creation).
-    if (whitelistEntry.status === "pending") {
-      const s = await getSettings();
-      const cap = pilotCap(wantRole, s);
-      const approvedCount = await client.execute({
-        sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status = 'approved'",
-        args: [wantRole],
-      });
-      if (Number(approvedCount.rows[0].n) >= cap) {
-        return res.status(403).json({ error: "Pilot limit poori ho gayi — registration band hai" });
+    if (!autoApprove) {
+      if (!whitelistEntry) {
+        return res.status(403).json({ error: "Pilot registration sirf whitelist par hai — owner se rabta karein" });
+      }
+      // Live cap re-check at signup time (the whitelist-add check is the
+      // first layer; this one guards the actual account creation).
+      if (whitelistEntry.status === "pending") {
+        const cap = pilotCap(wantRole, settings);
+        const approvedCount = await client.execute({
+          sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status = 'approved'",
+          args: [wantRole],
+        });
+        if (Number(approvedCount.rows[0].n) >= cap) {
+          return res.status(403).json({ error: "Pilot limit poori ho gayi — registration band hai" });
+        }
       }
     }
   }
@@ -502,17 +569,22 @@ app.post("/api/auth/google/phone", async (req, res) => {
     return finish(existing.id, existing.role);
   }
   // New account: drivers are owner-created, riders go through the pilot gate.
+  // v2.6 auto-approve: when auto_approve is ON the pilot gate is bypassed
+  // for riders here too (same as phone signup); a whitelisted number is
+  // still flipped pending→approved. When OFF, the old gate returns exactly.
   if (wantRole === "driver") return res.status(403).json({ error: "Driver account sirf owner banata hai — owner se rabta karein" });
   let whitelistEntry = null;
   if (String((await getSettings()).pilot_mode) === "1") {
     const wl = await client.execute({ sql: "SELECT * FROM pilot_whitelist WHERE phone = ? AND role = ?", args: [cleanPhone, "rider"] });
     whitelistEntry = wl.rows.find((r) => r.status === "pending" || r.status === "approved") || null;
-    if (!whitelistEntry) return res.status(403).json({ error: "Pilot registration sirf whitelist par hai — owner se rabta karein" });
-    if (whitelistEntry.status === "pending") {
-      const s = await getSettings();
-      const cap = pilotCap("rider", s);
-      const approvedCount = await client.execute({ sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status = 'approved'", args: ["rider"] });
-      if (Number(approvedCount.rows[0].n) >= cap) return res.status(403).json({ error: "Pilot limit poori ho gayi — registration band hai" });
+    if (!autoApproveOn(await getSettings())) {
+      if (!whitelistEntry) return res.status(403).json({ error: "Pilot registration sirf whitelist par hai — owner se rabta karein" });
+      if (whitelistEntry.status === "pending") {
+        const s = await getSettings();
+        const cap = pilotCap("rider", s);
+        const approvedCount = await client.execute({ sql: "SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = ? AND status = 'approved'", args: ["rider"] });
+        if (Number(approvedCount.rows[0].n) >= cap) return res.status(403).json({ error: "Pilot limit poori ho gayi — registration band hai" });
+      }
     }
   }
   const r = await client.execute({
@@ -683,7 +755,7 @@ app.post("/api/drivers/register", requireAuth, async (req, res) => {
     sql: "INSERT INTO vehicles(driver_user_id, vehicle_type, model, plate, registration_no, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?)",
     args: [num(user_id), vehicle_type, vehicle_model || "", plate || "", vehicle_reg, now()],
   });
-  res.json({ driver_id: driverId, status: "pending", message: "Registration submitted. The owner will approve it." });
+  res.json({ driver_id: driverId, status: "pending", message: "Registration submitted. Upload your CNIC, licence and vehicle documents — once all 3 are uploaded they are checked automatically and you can go online right away." });
 });
 
 app.get("/api/drivers/:id", requireAuth, requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
@@ -1697,12 +1769,18 @@ app.get("/api/admin/pilot-status", requireAdmin, async (req, res) => {
   res.json({
     pilot_mode: String(s.pilot_mode) === "1",
     pilot_chunian_only: String(s.pilot_chunian_only) === "1",
+    // v2.6 auto-approve: ON = new riders join instantly (whitelist +
+    // caps bypassed), drivers approved automatically once all 3 documents
+    // are uploaded. auto_approved = drivers the system approved on its
+    // own (audit action "auto_approve"), so the owner can see the count.
+    auto_approve: String(s.auto_approve) === "1",
     caps: { drivers: pilotCap("driver", s), riders: pilotCap("rider", s) },
     drivers: {
       whitelisted: await one("SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = 'driver' AND status IN ('pending','approved')"),
       signed_up: await one("SELECT COUNT(*) AS n FROM pilot_whitelist WHERE role = 'driver' AND status = 'approved'"),
       verified: await one("SELECT COUNT(*) AS n FROM drivers WHERE documents_status = 'approved'"),
       approved: await one("SELECT COUNT(*) AS n FROM drivers WHERE status = 'approved'"),
+      auto_approved: await one("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auto_approve'"),
       online: await one("SELECT COUNT(*) AS n FROM drivers WHERE online = 1 AND status = 'approved'"),
       pending_approval: await one("SELECT COUNT(*) AS n FROM drivers WHERE status = 'pending'"),
     },
@@ -2084,7 +2162,7 @@ app.post("/api/admin/demo/disable", requireAdmin, async (req, res) => {
 
 // Fare + commission settings — take effect immediately for new fare estimates.
 app.post("/api/admin/settings", requireAdmin, async (req, res) => {
-  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup", "min_withdrawal", "pilot_mode", "pilot_max_drivers", "pilot_max_riders", "pilot_chunian_only", "owner_name"];
+  const allowed = ["rate_bike_per_km", "rate_rickshaw_per_km", "rate_car_per_km", "rate_ac_car_per_km", "min_bike", "min_rickshaw", "min_car", "min_ac_car", "commission_pct", "booking_fee", "sadapay_number", "jazzcash_number", "support_phone", "support_whatsapp", "min_topup", "min_withdrawal", "pilot_mode", "pilot_max_drivers", "pilot_max_riders", "pilot_chunian_only", "auto_approve", "owner_name"];
   const before = await getSettings();
   const changed = [];
   for (const key of allowed) {
@@ -2092,7 +2170,7 @@ app.post("/api/admin/settings", requireAdmin, async (req, res) => {
       let value = String(req.body[key]);
       // Pilot keys are validated: mode flags are "0"/"1", caps are
       // non-negative integers. A bad value is rejected, not stored.
-      if (key === "pilot_mode" || key === "pilot_chunian_only") {
+      if (key === "pilot_mode" || key === "pilot_chunian_only" || key === "auto_approve") {
         if (value !== "0" && value !== "1") return res.status(400).json({ error: "pilot_mode must be 0 or 1" });
       }
       if (key === "pilot_max_drivers" || key === "pilot_max_riders") {
@@ -2123,7 +2201,33 @@ app.post("/api/admin/settings", requireAdmin, async (req, res) => {
       detail: `Pilot mode ${before.pilot_mode} -> ${req.body.pilot_mode} (${String(req.body.pilot_mode) === "1" ? "public signup CLOSED, whitelist only" : "public signup OPEN"})`,
     });
   }
-  res.json({ settings: await getSettings() });
+  // v2.6 auto-approve toggle: flipping OFF→ON runs a ONE-TIME sweep —
+  // any driver still 'pending' whose documents are ALL approved is
+  // auto-approved now (with audit entries + driver notification), so
+  // nobody who already finished their documents keeps waiting.
+  let autoApproved = 0;
+  if (req.body.auto_approve !== undefined && String(before.auto_approve) === "0" && String(req.body.auto_approve) === "1") {
+    const pendingDrivers = await client.execute({ sql: "SELECT user_id FROM drivers WHERE status = 'pending'" });
+    for (const row of pendingDrivers.rows) {
+      const checklist = await getDocChecklist(client, Number(row.user_id));
+      if (!checklist.all) continue;
+      await withTx(async (tx) => applyAutoApproval(tx, Number(row.user_id)));
+      await notify(client, { userId: Number(row.user_id), role: "user", type: "driver_approved", params: {} });
+      autoApproved++;
+    }
+    await writeAudit(client, {
+      actorId: req.auth.ownerId, actorRole: "admin", action: "auto_approve_toggle",
+      targetType: "settings", targetId: null,
+      detail: `Auto-approve 0 -> 1 (sweep auto-approved ${autoApproved} pending driver(s) with complete documents)`,
+    });
+  } else if (req.body.auto_approve !== undefined && String(before.auto_approve) !== String(req.body.auto_approve)) {
+    await writeAudit(client, {
+      actorId: req.auth.ownerId, actorRole: "admin", action: "auto_approve_toggle",
+      targetType: "settings", targetId: null,
+      detail: `Auto-approve ${before.auto_approve} -> ${req.body.auto_approve} (${String(req.body.auto_approve) === "1" ? "automatic approval ON" : "manual approval ON — whitelist gate + owner approval"})`,
+    });
+  }
+  res.json({ settings: await getSettings(), auto_approved: autoApproved });
 });
 
 app.get("/api/admin/reports", requireAdmin, async (req, res) => {
@@ -2376,6 +2480,19 @@ app.post("/api/drivers/me/documents", requireAuth, async (req, res) => {
     });
     return { document_id: Number(r.lastInsertRowid) };
   });
+  // v2.6 auto-approve: when auto_approve is ON and CNIC + licence +
+  // vehicle are now ALL present, the documents and the driver are
+  // approved automatically in the same step — no waiting for the owner.
+  // The driver can then go online right away. When OFF, the upload stays
+  // 'pending' awaiting manual approval, exactly as before.
+  if (autoApproveOn(await getSettings())) {
+    const present = await gateDocsPresent(client, req.auth.ownerId);
+    if (present.all) {
+      const { approvedDocs } = await withTx(async (tx) => applyAutoApproval(tx, req.auth.ownerId));
+      await notifyAutoApproved(req.auth.ownerId, approvedDocs);
+      return res.json({ ...out, doc_type, status: "approved", auto_approved: true, expires_at: exp, message: "Document upload ho gaya — teeno documents poori hain, account khud-ba-khud approve ho gaya. Ab online ho sakte hain." });
+    }
+  }
   res.json({ ...out, doc_type, status: "pending", expires_at: exp, message: "Document upload ho gaya — approval ke liye bhej di." });
 });
 

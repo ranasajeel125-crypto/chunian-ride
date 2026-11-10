@@ -72,14 +72,24 @@
     <div class="card" id="rider-auth">
       <p class="eyebrow">Rider</p>
       <h2 data-i18n="signup_title">Login / Signup</h2>
-      <p class="card-sub" data-i18n="rider_login_sub">Login with phone + password. First time? Enter your name + phone + password — your account will be created.</p>
-      <input id="rider-name" data-i18n-ph="name_ph" placeholder="Your name" autocomplete="name">
-      <input id="rider-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03XX-XXXXXXX" inputmode="tel" autocomplete="tel">
-      <input id="rider-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)" autocomplete="current-password">
-      <p class="form-err" id="auth-err" role="alert"></p>
-      <div class="row">
-        <button class="primary" id="btn-rider-signup" data-i18n="btn_signup">Sign up</button>
-        <button id="btn-rider-login" data-i18n="btn_login">Login</button>
+      <div class="auth-block">
+        <h3 data-i18n="login_title">Login</h3>
+        <p class="card-sub" data-i18n="rider_login_sub">Already have an account? Enter your phone + password and tap Login.</p>
+        <input id="rider-phone" data-i18n-ph="phone_ph" placeholder="Phone — e.g. 03XX-XXXXXXX" inputmode="tel" autocomplete="tel">
+        <input id="rider-password" type="password" data-i18n-ph="password_ph" placeholder="Password (at least 6 characters)" autocomplete="current-password">
+        <p class="form-err" id="auth-err" role="alert"></p>
+        <div class="row">
+          <button class="primary" id="btn-rider-login" data-i18n="btn_login">Login</button>
+        </div>
+      </div>
+      <p class="or-divider" data-i18n="or_divider">— or —</p>
+      <div class="auth-block">
+        <h3 data-i18n="rider_signup_title">New here? Sign up</h3>
+        <p class="card-sub" data-i18n="rider_signup_sub">New? Enter your name below (with the same phone + password above) and tap Sign up — you can book right away. No waiting, no approval needed.</p>
+        <input id="rider-name" data-i18n-ph="name_ph" placeholder="Your name" autocomplete="name">
+        <div class="row">
+          <button class="primary" id="btn-rider-signup" data-i18n="btn_signup">Sign up</button>
+        </div>
       </div>
       <div class="google-box">
         <button class="google-btn" id="btn-google" type="button">
@@ -260,8 +270,8 @@
 </nav>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/shared.js?v=10"></script>
-<script src="/rider.js?v=11"></script>
+<script src="/shared.js?v=11"></script>
+<script src="/rider.js?v=12"></script>
 <script>
   $("btn-rider-signup").addEventListener("click", (e) => riderSignup(e.currentTarget));
   $("btn-rider-login").addEventListener("click", (e) => riderLogin(e.currentTarget));

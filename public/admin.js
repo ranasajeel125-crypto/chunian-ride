@@ -130,9 +130,14 @@ const STRINGS = {
     audit_title: "Audit Log",
     // Pilot launch (v2.2)
     pilot_title: "Pilot Launch — Controlled Rollout",
-    pilot_note: "Pilot mode ON = public signup is closed; only whitelisted phones can register (max 10 drivers, 20 riders). Rides are Chunian City only. Turn pilot mode OFF only when you are ready for public launch — every toggle is written to the audit log.",
+    pilot_note: "Pilot mode ON = public signup is closed; only whitelisted phones can register (max 10 drivers, 20 riders). Rides are Chunian City only. Turn pilot mode OFF only when you are ready for public launch — every toggle is written to the audit log. Auto-approve ON (default) bypasses the whitelist: new riders join instantly and drivers are approved automatically once all 3 documents are uploaded. Turn auto-approve OFF to go back to manual approval.",
     pilot_mode_label: "Pilot mode ON (whitelist-only signup)",
     pilot_chunian_only_label: "Chunian-only rides (block intercity)",
+    auto_approve_label: "Auto-approve ON — new riders join instantly, drivers approved automatically once all 3 documents are uploaded",
+    auto_approve_board: "Auto-approve",
+    auto_approve_on: "✅ Auto-approve ON — new riders join instantly, no whitelist needed. Drivers are approved automatically once all 3 documents are uploaded.",
+    auto_approve_off: "⏸ Auto-approve OFF — manual approval: only whitelisted phones can sign up and the owner must approve drivers.",
+    auto_approved_label: "Drivers auto-approved",
     pilot_max_drivers_label: "Max pilot drivers",
     pilot_max_riders_label: "Max pilot riders",
     pilot_save: "Save pilot settings",
@@ -413,9 +418,14 @@ const STRINGS = {
     audit_title: "آڈٹ لاگ",
     // Pilot launch (v2.2)
     pilot_title: "پائلٹ لانچ — کنٹرولڈ آغاز",
-    pilot_note: "پائلٹ موڈ آن = عوامی سائن اپ بند ہے؛ صرف وائٹ لسٹ والے فون رجسٹر کر سکتے ہیں (زیادہ سے زیادہ 10 ڈرائیور، 20 رائیڈر)۔ رائیڈز صرف چونیاں شہر تک ہیں۔ پائلٹ موڈ صرف اس وقت بند کریں جب آپ عوامی لانچ کے لیے تیار ہوں — ہر تبدیلی آڈٹ لاگ میں لکھی جاتی ہے۔",
+    pilot_note: "پائلٹ موڈ آن = عوامی سائن اپ بند ہے؛ صرف وائٹ لسٹ والے فون رجسٹر کر سکتے ہیں (زیادہ سے زیادہ 10 ڈرائیور، 20 رائیڈر)۔ رائیڈز صرف چونیاں شہر تک ہیں۔ پائلٹ موڈ صرف اس وقت بند کریں جب آپ عوامی لانچ کے لیے تیار ہوں — ہر تبدیلی آڈٹ لاگ میں لکھی جاتی ہے۔ آٹو اپروو آن (پہلے سے) وائٹ لسٹ کو نظرانداز کرتا ہے: نئے رائیڈر فوراً شامل ہوتے ہیں اور ڈرائیورز تینوں دستاویزات اپ لوڈ ہوتے ہی خودکار منظور ہو جاتے ہیں۔ دستی منظوری پر واپس جانے کے لیے آٹو اپروو بند کریں۔",
     pilot_mode_label: "پائلٹ موڈ آن (صرف وائٹ لسٹ سائن اپ)",
     pilot_chunian_only_label: "صرف چونیاں کی رائیڈز (بین شہر بند)",
+    auto_approve_label: "آٹو اپروو آن — نئے رائیڈر فوراً شامل ہوتے ہیں، ڈرائیورز تینوں دستاویزات اپ لوڈ ہوتے ہی خودکار منظور ہو جاتے ہیں",
+    auto_approve_board: "آٹو اپروو",
+    auto_approve_on: "✅ آٹو اپروو آن — نئے رائیڈر فوراً شامل ہوتے ہیں، وائٹ لسٹ کی ضرورت نہیں۔ ڈرائیورز تینوں دستاویزات اپ لوڈ ہوتے ہی خودکار منظور ہو جاتے ہیں۔",
+    auto_approve_off: "⏸ آٹو اپروو بند — دستی منظوری: صرف وائٹ لسٹ والے فون سائن اپ کر سکتے ہیں اور مالک کو ڈرائیورز منظور کرنے ہوتے ہیں۔",
+    auto_approved_label: "آٹو اپروو شدہ ڈرائیورز",
     pilot_max_drivers_label: "زیادہ سے زیادہ پائلٹ ڈرائیور",
     pilot_max_riders_label: "زیادہ سے زیادہ پائلٹ رائیڈر",
     pilot_save: "پائلٹ سیٹنگز محفوظ کریں",
@@ -1584,6 +1594,7 @@ async function loadPilot() {
     const s = (await api("/api/settings")).settings || {};
     $("pilot-mode").checked = String(s.pilot_mode) === "1";
     $("pilot-chunian-only").checked = String(s.pilot_chunian_only) === "1";
+    $("auto-approve").checked = String(s.auto_approve) === "1";
     $("pilot-max-drivers").value = s.pilot_max_drivers ?? 10;
     $("pilot-max-riders").value = s.pilot_max_riders ?? 20;
   } catch (e) { handleApiError(e); }
@@ -1597,8 +1608,13 @@ async function loadPilotStatus() {
   try {
     const d = await api("/api/admin/pilot-status");
     const sos = (d.open_sos || []).map((x) => `<div class="row-item" style="border-left:4px solid #d00"><b>🚨 SOS</b> — ${escapeHtml(t("ride"))} #${Number(x.ride_id)} • ${escapeHtml(x.user_name || "")} (${escapeHtml(x.user_phone || "")}) • ${escapeHtml(x.message || "")} • ${escapeHtml(fmtDate(x.created_at))}</div>`).join("");
-    el.innerHTML = `<div class="stats">`
+    // v2.6: the board must truthfully say whether signups are automatic
+    // or manual — the owner reads this, not the code.
+    const autoBanner = `<p class="note">${escapeHtml(d.auto_approve ? t("auto_approve_on") : t("auto_approve_off"))}</p>`;
+    el.innerHTML = autoBanner + `<div class="stats">`
       + `<div class="stat"><div class="label">Pilot mode</div><div class="value">${d.pilot_mode ? "ON" : "OFF"}</div></div>`
+      + `<div class="stat"><div class="label">${escapeHtml(t("auto_approve_board"))}</div><div class="value">${d.auto_approve ? "ON" : "OFF"}</div></div>`
+      + `<div class="stat"><div class="label">${escapeHtml(t("auto_approved_label"))}</div><div class="value">${Number((d.drivers && d.drivers.auto_approved) || 0)}</div></div>`
       + `<div class="stat"><div class="label">Drivers whitelisted</div><div class="value">${Number(d.drivers.whitelisted)} / ${Number(d.caps.drivers)}</div></div>`
       + `<div class="stat"><div class="label">Drivers signed up</div><div class="value">${Number(d.drivers.signed_up)}</div></div>`
       + `<div class="stat"><div class="label">Drivers verified</div><div class="value">${Number(d.drivers.verified)}</div></div>`
@@ -1663,6 +1679,7 @@ async function savePilotSettings(btn) {
   const body = {
     pilot_mode: $("pilot-mode").checked ? "1" : "0",
     pilot_chunian_only: $("pilot-chunian-only").checked ? "1" : "0",
+    auto_approve: $("auto-approve").checked ? "1" : "0",
     pilot_max_drivers: $("pilot-max-drivers").value,
     pilot_max_riders: $("pilot-max-riders").value,
   };

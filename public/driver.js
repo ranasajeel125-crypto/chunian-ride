@@ -664,8 +664,10 @@ async function uploadDoc(docType, file, btn) {
   try {
     const dataUrl = await downscaleImage(file);
     if (dataUrl.length > 2100000) { setErr($("docs-err"), t("doc_too_large")); return; }
-    await api("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: docType, mime: "image/jpeg", data_url: dataUrl }) });
-    toast(t("doc_uploaded", { doc: docLabel(docType) }), "ok");
+    const up = await api("/api/drivers/me/documents", { method: "POST", body: JSON.stringify({ doc_type: docType, mime: "image/jpeg", data_url: dataUrl }) });
+    // v2.6: the server says whether this upload completed the set and the
+    // documents were auto-approved — the toast must say so, not "pending".
+    toast(t(up && up.status === "approved" ? "doc_uploaded_auto" : "doc_uploaded", { doc: docLabel(docType) }), "ok");
     renderDocs();
   } catch (e) { setErr($("docs-err"), e.message); toast(e.message, "error"); }
   finally { setLoading(btn, false); }
