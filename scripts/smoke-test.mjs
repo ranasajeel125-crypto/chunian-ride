@@ -1309,6 +1309,8 @@ async function main() {
       check("driver page carries the Google button markup", driverHtml.status === 200 && driverHtml.text.includes('id="btn-google"'));
       const adminHtml = await gCall("/admin");
       check("admin page has NO Google button (phone+password only)", adminHtml.status === 200 && !adminHtml.text.includes('id="btn-google"'));
+      const googlePhoneHtml = await gCall("/google-phone");
+      check("google-phone page serves 200 with the phone + password form (hotfix: bare path needs its own route — static does not map it)", googlePhoneHtml.status === 200 && googlePhoneHtml.text.includes('id="google-phone"') && googlePhoneHtml.text.includes('id="google-password"'));
       const assetlinks = await gCall("/.well-known/assetlinks.json");
       check("assetlinks.json served with package + cert fingerprint", assetlinks.status === 200 && assetlinks.text.includes("com.chunianride.app") && assetlinks.text.includes("19a11c27e7cc613271faec139ba9290140e576c5f95b50f24d3996eb9aab3e6a"), `got ${assetlinks.status}`);
       const gToken = extractSetupToken(gOut);

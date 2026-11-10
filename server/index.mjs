@@ -2455,6 +2455,10 @@ app.get("/", (req, res) => res.sendFile(path.join(root, "public", "index.html"))
 app.get("/admin", (req, res) => res.sendFile(path.join(root, "public", "admin.html")));
 app.get("/rider", (req, res) => res.sendFile(path.join(root, "public", "rider.html")));
 app.get("/driver", (req, res) => res.sendFile(path.join(root, "public", "driver.html")));
+// v2.5.0 hotfix: the Google callback redirects first-time users here
+// (/google-phone?token=...). express.static does not map a bare path to
+// its .html file, so without this route the phone step 404'd on live.
+app.get("/google-phone", (req, res) => res.sendFile(path.join(root, "public", "google-phone.html")));
 
 // ---- Scheduled-ride reminders (v2.3) ----
 // Sweep every 5 minutes (guarded — a failed sweep never crashes the
